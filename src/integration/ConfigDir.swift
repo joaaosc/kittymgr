@@ -43,6 +43,9 @@ public struct ConfigDir: Sendable, Equatable {
     /// Root holding one folder per available plugin.
     public var pluginsDir: URL { managedDir.appendingPathComponent("plugins") }
 
+    /// Root holding versioned snapshots of the managed surface.
+    public var backupsDir: URL { managedDir.appendingPathComponent("backups") }
+
     /// Managed entry point referenced by the injected `include` line.
     public var activeConf: URL { managedDir.appendingPathComponent("active.conf") }
 

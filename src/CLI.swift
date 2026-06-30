@@ -42,7 +42,7 @@ public enum KittymgrCLI {
                 return 0
             case "switch":
                 guard let name = positionals.first else {
-                    printError("usage: kittymgr switch <name>")
+                    printError("usage: kittymgr switch <name> [--force]")
                     return 2
                 }
                 let dir = ConfigDir.resolve()
@@ -51,15 +51,31 @@ public enum KittymgrCLI {
                     pluginStore: PluginStore(root: dir.pluginsDir),
                     activePointer: ActivePointer(url: dir.activePointerFile),
                     activeConf: dir.activeConf,
-                    rawName: name
+                    rawName: name,
+                    force: flags.contains("--force") || flags.contains("-f")
                 ).run()
                 return 0
+            case "check":
+                guard let name = positionals.first else {
+                    printError("usage: kittymgr check <name>")
+                    return 2
+                }
+                let dir = ConfigDir.resolve()
+                let passed = try CheckCommand(
+                    profileStore: ProfileStore(root: dir.profilesDir),
+                    pluginStore: PluginStore(root: dir.pluginsDir),
+                    rawName: name
+                ).run()
+                return passed ? 0 : 1
             case "current":
                 let dir = ConfigDir.resolve()
                 try CurrentCommand(activePointer: ActivePointer(url: dir.activePointerFile)).run()
                 return 0
             case "plugin":
                 return runPlugin(options)
+            case "ui", "pick":
+                try UICommand(configDir: ConfigDir.resolve()).run()
+                return 0
             case "help", "-h", "--help":
                 printUsage()
                 return 0
@@ -152,11 +168,13 @@ public enum KittymgrCLI {
           kittymgr list                 List stored profiles.
           kittymgr create <name>        Create an empty profile.
           kittymgr delete <name> [-f]   Delete a profile (--force/-f skips confirmation).
-          kittymgr switch <name>        Activate a profile and reload kitty.
+          kittymgr switch <name> [-f]   Activate a profile (validates; -f overrides conflicts).
           kittymgr current              Print the active profile.
+          kittymgr check <name>         Report conflicts and validation without switching.
           kittymgr plugin list          List plugins and their enabled state.
           kittymgr plugin enable <name> [--profile <name>]
           kittymgr plugin disable <name> [--profile <name>]
+          kittymgr ui                   Launch the interactive picker (alias: pick).
           kittymgr help                 Show this message.
 
         The kitty config directory is resolved from KITTY_CONFIG_DIRECTORY,

@@ -5,13 +5,30 @@ public enum KittymgrCLI {
     /// Runs the CLI with arguments that exclude the executable path.
     /// Returns a process exit code.
     public static func run(_ arguments: [String]) -> Int32 {
-        guard let command = arguments.first else {
+        // `--dry-run` is a cross-cutting global flag: strip it before dispatch so
+        // every command sees a clean argument list and inherits preview behavior.
+        var args = arguments
+        let dryRun = args.contains("--dry-run")
+        args.removeAll { $0 == "--dry-run" }
+
+        guard let command = args.first else {
             printUsage()
             return 2
         }
-        let options = Array(arguments.dropFirst())
+        let options = Array(args.dropFirst())
         let positionals = options.filter { !$0.hasPrefix("-") }
         let flags = options.filter { $0.hasPrefix("-") }
+
+        // `backup` consumes `--dry-run` natively (it prints a diff). For other
+        // mutating commands the full apply-pipeline preview arrives in a later
+        // milestone; until then `--dry-run` must still guarantee no writes happen.
+        let mutatingWithoutPreview: Set<String> = [
+            "init", "uninstall", "create", "delete", "switch", "plugin", "ui", "pick",
+        ]
+        if dryRun && mutatingWithoutPreview.contains(command) {
+            print("[dry-run] \(command): no changes made. Use `kittymgr backup ... --dry-run` to preview diffs.")
+            return 0
+        }
 
         do {
             switch command {
@@ -73,6 +90,8 @@ public enum KittymgrCLI {
                 return 0
             case "plugin":
                 return runPlugin(options)
+            case "backup":
+                return runBackup(options, dryRun: dryRun)
             case "ui", "pick":
                 try UICommand(configDir: ConfigDir.resolve()).run()
                 return 0
@@ -92,6 +111,36 @@ public enum KittymgrCLI {
 
     private static func profileStore() -> ProfileStore {
         ProfileStore(root: ConfigDir.resolve().profilesDir)
+    }
+
+    private static func runBackup(_ options: [String], dryRun: Bool) -> Int32 {
+        let (label, rest) = extractOption("--label", from: options)
+        let positionals = rest.filter { !$0.hasPrefix("-") }
+
+        let action: BackupCommand.Action
+        switch positionals.first {
+        case "create", nil:
+            action = .create(label: label)
+        case "list":
+            action = .list
+        case "restore":
+            guard positionals.count >= 2 else {
+                printError("usage: kittymgr backup restore <id> [--dry-run]")
+                return 2
+            }
+            action = .restore(id: positionals[1])
+        case let other?:
+            printError("unknown backup action: \(other)")
+            return 2
+        }
+
+        do {
+            try BackupCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+            return 0
+        } catch {
+            printError("\(error)")
+            return 1
+        }
     }
 
     private static func runPlugin(_ options: [String]) -> Int32 {
@@ -174,8 +223,14 @@ public enum KittymgrCLI {
           kittymgr plugin list          List plugins and their enabled state.
           kittymgr plugin enable <name> [--profile <name>]
           kittymgr plugin disable <name> [--profile <name>]
+          kittymgr backup create [--label <text>]   Snapshot the managed surface.
+          kittymgr backup list          List snapshots (id, timestamp, label).
+          kittymgr backup restore <id>  Restore a snapshot byte-for-byte.
           kittymgr ui                   Launch the interactive picker (alias: pick).
           kittymgr help                 Show this message.
+
+        Global flags:
+          --dry-run                     Preview a change as a unified diff; write nothing.
 
         The kitty config directory is resolved from KITTY_CONFIG_DIRECTORY,
         then $XDG_CONFIG_HOME/kitty, then ~/.config/kitty.

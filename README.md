@@ -11,8 +11,9 @@ clearly fenced `include` block and keeps all managed state in a dedicated
 - M02 — profile model & storage: `list`, `create`, `delete`.
 - M03 — switch active profile: `switch`, `current`.
 - M04 — plugins & composition: `plugin list/enable/disable`.
+- Backups & preview: `backup create/list/restore`, plus a global `--dry-run` flag.
 
-Later milestones add backups/history, validation, and a TUI.
+Later milestones add validation/atomic apply and a richer TUI.
 
 ## Build
 
@@ -45,7 +46,18 @@ kittymgr current              # Print the active profile.
 kittymgr plugin list                          # List plugins and enabled state.
 kittymgr plugin enable theme-sample           # Enable for the active profile.
 kittymgr plugin disable theme-sample --profile work
+
+# Backups, history, and preview.
+kittymgr backup create --label demo           # Snapshot the managed surface.
+kittymgr backup list                          # List snapshots (id, timestamp, label).
+kittymgr backup restore <id>                  # Restore a snapshot byte-for-byte.
+kittymgr backup restore <id> --dry-run        # Preview the restore as a unified diff.
 ```
+
+The global `--dry-run` flag previews a change as a unified diff and writes
+nothing. Snapshots are kept under `managed/backups/` as content-addressed objects
+plus one JSON manifest per snapshot; the manifest is published with an atomic
+rename, so an interrupted snapshot never leaves a partial entry in the history.
 
 ## How it works
 

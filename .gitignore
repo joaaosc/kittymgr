@@ -1,0 +1,23 @@
+# Swift / SwiftPM build artifacts
+/.build/
+/build/
+/DerivedData/
+*.xcodeproj/xcuserdata/
+.swiftpm/
+
+# Local-only operational and agent files
+/.local/
+/.agents/
+/.gemini/
+/.claude/
+/.codex/
+/.antigravity/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Local milestone notes
+/M0*.md
+
+# macOS
+.DS_Store

@@ -3,21 +3,17 @@ import Foundation
 /// Detects, inserts, and removes the single guarded `include` block that kittymgr
 /// owns inside the user's `kitty.conf`.
 ///
+/// The block is inserted at the TOP of `kitty.conf` so the managed `include` is
+/// evaluated before the user's own settings. kitty applies options last-wins, so
+/// this gives the user's `kitty.conf` final precedence over managed layers.
+///
 /// All operations are pure string transformations so they can be unit tested in
-/// isolation and so the insert/remove pair stays exactly reversible.
+/// isolation and so the insert/remove pair stays exactly reversible: user content
+/// is never modified, only shifted below the block.
 public enum Guard {
     public static let beginMarker = "# >>> kittymgr (managed) >>>"
     public static let endMarker = "# <<< kittymgr (managed) <<<"
     public static let includeLine = "include managed/active.conf"
-
-    /// Result of appending the managed block, carrying the information needed to
-    /// invert the change byte-for-byte during `uninstall`.
-    public struct AppendResult: Sendable, Equatable {
-        public let content: String
-        /// Whether a terminating newline was added to previously unterminated
-        /// user content. `uninstall` strips it back to restore the original.
-        public let addedTrailingNewline: Bool
-    }
 
     /// The exact text of the managed block, newline-terminated.
     public static func blockText() -> String {
@@ -35,29 +31,24 @@ public enum Guard {
         return lines.contains(beginMarker) && lines.contains(endMarker)
     }
 
-    /// Append the managed block to `content`, leaving every existing line untouched.
-    /// Idempotent: returns the input unchanged when the block is already present.
-    public static func append(to content: String) -> AppendResult {
+    /// Insert the managed block at the top of `content`, leaving every existing
+    /// line untouched (only shifted below the block). Idempotent: returns the
+    /// input unchanged when the block is already present.
+    public static func insert(into content: String) -> String {
         if contains(in: content) {
-            return AppendResult(content: content, addedTrailingNewline: false)
+            return content
         }
         let block = blockText()
         if content.isEmpty {
-            return AppendResult(content: block, addedTrailingNewline: false)
-        }
-        var body = content
-        var addedTrailingNewline = false
-        if !body.hasSuffix("\n") {
-            body += "\n"
-            addedTrailingNewline = true
+            return block
         }
         // One blank separator line keeps the managed block visually distinct.
-        return AppendResult(content: body + "\n" + block, addedTrailingNewline: addedTrailingNewline)
+        return block + "\n" + content
     }
 
-    /// Remove the managed block (and the separator line `append` inserted),
+    /// Remove the managed block (and the separator line `insert` added),
     /// restoring the surrounding content exactly.
-    public static func remove(from content: String, addedTrailingNewline: Bool = false) -> String {
+    public static func remove(from content: String) -> String {
         var lines = content.components(separatedBy: "\n")
         guard let begin = lines.firstIndex(of: beginMarker),
               let end = lines[begin...].firstIndex(of: endMarker),
@@ -66,14 +57,10 @@ public enum Guard {
             return content
         }
         lines.removeSubrange(begin...end)
-        // Drop the single blank separator line inserted ahead of the block.
-        if begin > 0, begin - 1 < lines.count, lines[begin - 1].isEmpty {
-            lines.remove(at: begin - 1)
+        // Drop the single blank separator line that followed the block.
+        if begin < lines.count, lines[begin].isEmpty {
+            lines.remove(at: begin)
         }
-        var result = lines.joined(separator: "\n")
-        if addedTrailingNewline, result.hasSuffix("\n") {
-            result.removeLast()
-        }
-        return result
+        return lines.joined(separator: "\n")
     }
 }

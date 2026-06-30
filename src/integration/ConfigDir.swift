@@ -37,8 +37,17 @@ public struct ConfigDir: Sendable, Equatable {
     /// Directory owned entirely by kittymgr.
     public var managedDir: URL { url.appendingPathComponent("managed") }
 
+    /// Root holding one folder per named profile.
+    public var profilesDir: URL { managedDir.appendingPathComponent("profiles") }
+
+    /// Root holding one folder per available plugin.
+    public var pluginsDir: URL { managedDir.appendingPathComponent("plugins") }
+
     /// Managed entry point referenced by the injected `include` line.
     public var activeConf: URL { managedDir.appendingPathComponent("active.conf") }
+
+    /// Authoritative pointer to the currently active profile.
+    public var activePointerFile: URL { managedDir.appendingPathComponent(".kittymgr-active") }
 
     /// Sidecar state used to make `uninstall` an exact inverse of `init`.
     public var metaFile: URL { managedDir.appendingPathComponent(".kittymgr-meta") }

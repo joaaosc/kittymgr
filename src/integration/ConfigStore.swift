@@ -3,14 +3,10 @@ import Foundation
 /// Persisted state that lets `uninstall` invert `init` exactly.
 struct Meta: Sendable, Equatable {
     var createdConf: Bool
-    var addedTrailingNewline: Bool
     var backup: String?
 
     func serialized() -> String {
-        var lines = [
-            "created_conf=\(createdConf)",
-            "added_trailing_newline=\(addedTrailingNewline)",
-        ]
+        var lines = ["created_conf=\(createdConf)"]
         if let backup {
             lines.append("backup=\(backup)")
         }
@@ -19,19 +15,17 @@ struct Meta: Sendable, Equatable {
 
     static func parse(_ text: String) -> Meta {
         var createdConf = false
-        var addedTrailingNewline = false
         var backup: String?
         for line in text.components(separatedBy: "\n") {
             let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { continue }
             switch parts[0] {
             case "created_conf": createdConf = (parts[1] == "true")
-            case "added_trailing_newline": addedTrailingNewline = (parts[1] == "true")
             case "backup": backup = parts[1]
             default: break
             }
         }
-        return Meta(createdConf: createdConf, addedTrailingNewline: addedTrailingNewline, backup: backup)
+        return Meta(createdConf: createdConf, backup: backup)
     }
 }
 

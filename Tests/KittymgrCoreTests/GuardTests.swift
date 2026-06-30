@@ -11,39 +11,38 @@ struct GuardTests {
         #expect(includeCount == 1)
     }
 
-    @Test func appendIsIdempotent() {
-        let once = Guard.append(to: "font_size 12\n").content
-        let twice = Guard.append(to: once).content
+    @Test func insertIsIdempotent() {
+        let once = Guard.insert(into: "font_size 12\n")
+        let twice = Guard.insert(into: once)
         #expect(once == twice)
         let markers = once.components(separatedBy: "\n").filter { $0 == Guard.beginMarker }.count
         #expect(markers == 1)
     }
 
-    @Test func appendLeavesExistingLinesUnchanged() {
+    @Test func insertPlacesBlockAtTopAndKeepsUserContentAsSuffix() {
         let original = "font_size 12\nbackground #000000\n"
-        let appended = Guard.append(to: original).content
-        #expect(appended.hasPrefix(original))
+        let inserted = Guard.insert(into: original)
+        // Block first (so the managed include is evaluated before user settings),
+        // user content preserved verbatim as the suffix.
+        #expect(inserted.hasPrefix(Guard.beginMarker))
+        #expect(inserted.hasSuffix(original))
     }
 
     @Test func roundTripRestoresNewlineTerminatedContent() {
         let original = "font_size 12\nbackground #000000\n"
-        let result = Guard.append(to: original)
-        let restored = Guard.remove(from: result.content, addedTrailingNewline: result.addedTrailingNewline)
+        let restored = Guard.remove(from: Guard.insert(into: original))
         #expect(restored == original)
     }
 
     @Test func roundTripRestoresContentWithoutTrailingNewline() {
         let original = "font_size 12"
-        let result = Guard.append(to: original)
-        #expect(result.addedTrailingNewline)
-        let restored = Guard.remove(from: result.content, addedTrailingNewline: result.addedTrailingNewline)
+        let restored = Guard.remove(from: Guard.insert(into: original))
         #expect(restored == original)
     }
 
     @Test func roundTripRestoresEmptyContent() {
-        let result = Guard.append(to: "")
-        #expect(Guard.contains(in: result.content))
-        let restored = Guard.remove(from: result.content, addedTrailingNewline: result.addedTrailingNewline)
-        #expect(restored.isEmpty)
+        let inserted = Guard.insert(into: "")
+        #expect(Guard.contains(in: inserted))
+        #expect(Guard.remove(from: inserted).isEmpty)
     }
 }

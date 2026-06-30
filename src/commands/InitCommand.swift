@@ -19,6 +19,7 @@ public struct InitCommand {
         if !fm.fileExists(atPath: configDir.activeConf.path) {
             try Data().write(to: configDir.activeConf)
         }
+        try SamplePlugins.seed(into: configDir.pluginsDir)
 
         log("Config directory: \(configDir.url.path)")
 
@@ -32,16 +33,14 @@ public struct InitCommand {
             return false
         }
 
-        var meta = Meta(createdConf: !confExists, addedTrailingNewline: false, backup: nil)
+        var meta = Meta(createdConf: !confExists, backup: nil)
         if confExists {
             let backup = try ConfigStore.makeBackup(of: configDir.kittyConf)
             meta.backup = backup.lastPathComponent
             log("Backed up kitty.conf -> \(backup.lastPathComponent)")
         }
 
-        let appended = Guard.append(to: original)
-        meta.addedTrailingNewline = appended.addedTrailingNewline
-        try ConfigStore.writeAtomically(appended.content, to: configDir.kittyConf)
+        try ConfigStore.writeAtomically(Guard.insert(into: original), to: configDir.kittyConf)
         try ConfigStore.writeMeta(meta, to: configDir.metaFile)
 
         log(confExists

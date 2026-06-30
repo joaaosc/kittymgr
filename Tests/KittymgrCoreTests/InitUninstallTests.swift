@@ -70,7 +70,10 @@ struct InitUninstallTests {
         _ = try InitCommand(configDir: dir).run(log: silent)
 
         let conf = try read(dir.kittyConf)
-        #expect(conf.hasPrefix(original))
+        // The managed block is prepended so the user's config wins on precedence;
+        // user content is preserved verbatim as the suffix.
+        #expect(conf.hasSuffix(original))
+        #expect(conf.hasPrefix(Guard.beginMarker))
     }
 
     @Test func uninstallRestoresOriginalByteForByte() throws {

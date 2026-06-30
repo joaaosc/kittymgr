@@ -1,6 +1,10 @@
 # ADR 0001 — Integration strategy
 
-Status: Accepted
+Status: Accepted (block placement revised by ADR 0002)
+
+> Update: the "appended-at-end" placement noted below was the M01 assumption.
+> ADR 0002 moves the guard block to the top of `kitty.conf` so the user's own
+> settings keep final precedence. The single-guarded-`include` decision stands.
 
 ## Context
 

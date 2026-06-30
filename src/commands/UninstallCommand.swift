@@ -15,12 +15,12 @@ public struct UninstallCommand {
     public func run(log: (String) -> Void = { print($0) }) throws -> Bool {
         let fm = FileManager.default
         let meta = ConfigStore.readMeta(from: configDir.metaFile)
-            ?? Meta(createdConf: false, addedTrailingNewline: false, backup: nil)
+            ?? Meta(createdConf: false, backup: nil)
 
         if fm.fileExists(atPath: configDir.kittyConf.path) {
             let content = try String(contentsOf: configDir.kittyConf, encoding: .utf8)
             if Guard.contains(in: content) {
-                let cleaned = Guard.remove(from: content, addedTrailingNewline: meta.addedTrailingNewline)
+                let cleaned = Guard.remove(from: content)
                 let isEmptyNow = cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 if meta.createdConf, isEmptyNow {
                     try fm.removeItem(at: configDir.kittyConf)

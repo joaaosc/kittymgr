@@ -186,12 +186,7 @@ public struct SnapshotStore {
     }
 
     private func relativePath(of url: URL) -> String {
-        let base = configDir.url.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        if path.hasPrefix(base + "/") {
-            return String(path.dropFirst(base.count + 1))
-        }
-        return url.lastPathComponent
+        configDir.relativePath(of: url)
     }
 
     // MARK: Helpers

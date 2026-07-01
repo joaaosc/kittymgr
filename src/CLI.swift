@@ -11,6 +11,13 @@ public enum KittymgrCLI {
         let dryRun = args.contains("--dry-run")
         args.removeAll { $0 == "--dry-run" }
 
+        // `--help`/`-h` anywhere documents the full command surface, so both
+        // `kittymgr --help` and `kittymgr <cmd> --help` are answered.
+        if args.contains("--help") || args.contains("-h") {
+            printUsage()
+            return 0
+        }
+
         guard let command = args.first else {
             printUsage()
             return 2
@@ -23,7 +30,7 @@ public enum KittymgrCLI {
         // mutating commands the full apply-pipeline preview arrives in a later
         // milestone; until then `--dry-run` must still guarantee no writes happen.
         let mutatingWithoutPreview: Set<String> = [
-            "init", "uninstall", "create", "delete", "switch", "plugin", "ui", "pick",
+            "init", "uninstall", "create", "delete", "plugin", "ui", "pick",
         ]
         if dryRun && mutatingWithoutPreview.contains(command) {
             print("[dry-run] \(command): no changes made. Use `kittymgr backup ... --dry-run` to preview diffs.")
@@ -69,7 +76,8 @@ public enum KittymgrCLI {
                     activePointer: ActivePointer(url: dir.activePointerFile),
                     activeConf: dir.activeConf,
                     rawName: name,
-                    force: flags.contains("--force") || flags.contains("-f")
+                    force: flags.contains("--force") || flags.contains("-f"),
+                    dryRun: dryRun
                 ).run()
                 return 0
             case "check":
@@ -90,8 +98,21 @@ public enum KittymgrCLI {
                 return 0
             case "plugin":
                 return runPlugin(options)
+            case "profile":
+                return runProfile(options, dryRun: dryRun)
+            case "theme":
+                return runTheme(options, dryRun: dryRun)
+            case "key":
+                return runKey(options, dryRun: dryRun)
+            case "snippet":
+                return runSnippet(options, dryRun: dryRun)
+            case "kitten":
+                return runKitten(options, dryRun: dryRun)
             case "backup":
                 return runBackup(options, dryRun: dryRun)
+            case "apply":
+                try ApplyCommand(configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+                return 0
             case "ui", "pick":
                 try UICommand(configDir: ConfigDir.resolve()).run()
                 return 0
@@ -111,6 +132,189 @@ public enum KittymgrCLI {
 
     private static func profileStore() -> ProfileStore {
         ProfileStore(root: ConfigDir.resolve().profilesDir)
+    }
+
+    /// `profile` namespace: the same profile operations as the top-level commands,
+    /// grouped under one verb (`profile list/create/switch/delete/current`).
+    private static func runProfile(_ options: [String], dryRun: Bool) -> Int32 {
+        let positionals = options.filter { !$0.hasPrefix("-") }
+        let flags = options.filter { $0.hasPrefix("-") }
+        let dir = ConfigDir.resolve()
+        let force = flags.contains("--force") || flags.contains("-f")
+
+        do {
+            switch positionals.first {
+            case "list", nil:
+                try ListCommand(store: ProfileStore(root: dir.profilesDir)).run()
+            case "create":
+                guard positionals.count >= 2 else {
+                    printError("usage: kittymgr profile create <name>")
+                    return 2
+                }
+                if dryRun { print("[dry-run] profile create: no changes made."); return 0 }
+                try CreateCommand(store: ProfileStore(root: dir.profilesDir), rawName: positionals[1]).run()
+            case "switch":
+                guard positionals.count >= 2 else {
+                    printError("usage: kittymgr profile switch <name> [--force] [--dry-run]")
+                    return 2
+                }
+                try SwitchCommand(
+                    profileStore: ProfileStore(root: dir.profilesDir),
+                    pluginStore: PluginStore(root: dir.pluginsDir),
+                    activePointer: ActivePointer(url: dir.activePointerFile),
+                    activeConf: dir.activeConf,
+                    rawName: positionals[1],
+                    force: force,
+                    dryRun: dryRun
+                ).run()
+            case "delete":
+                guard positionals.count >= 2 else {
+                    printError("usage: kittymgr profile delete <name> [--force]")
+                    return 2
+                }
+                if dryRun { print("[dry-run] profile delete: no changes made."); return 0 }
+                try DeleteCommand(
+                    store: ProfileStore(root: dir.profilesDir),
+                    rawName: positionals[1],
+                    force: force,
+                    confirm: confirmOnStdin
+                ).run()
+            case "current":
+                try CurrentCommand(activePointer: ActivePointer(url: dir.activePointerFile)).run()
+            case let other?:
+                printError("unknown profile action: \(other)")
+                return 2
+            }
+            return 0
+        } catch {
+            printError("\(error)")
+            return 1
+        }
+    }
+
+    private static func runBlock(_ action: BlockCommand.Action, dryRun: Bool) -> Int32 {
+        do {
+            try BlockCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+            return 0
+        } catch {
+            printError("\(error)")
+            return 1
+        }
+    }
+
+    /// `theme list | install <name> [--from <file>] | switch <name> | remove <name>`.
+    private static func runTheme(_ options: [String], dryRun: Bool) -> Int32 {
+        let (from, rest) = extractOption("--from", from: options)
+        let positionals = rest.filter { !$0.hasPrefix("-") }
+        switch positionals.first {
+        case "list", nil:
+            return runBlock(.themeList, dryRun: dryRun)
+        case "install":
+            guard positionals.count >= 2 else { printError("usage: kittymgr theme install <name> [--from <file>]"); return 2 }
+            let content: String
+            if let from {
+                guard let text = try? String(contentsOfFile: from, encoding: .utf8) else {
+                    printError("cannot read theme file: \(from)"); return 2
+                }
+                content = text
+            } else {
+                content = ""
+            }
+            return runBlock(.themeInstall(name: positionals[1], content: content), dryRun: dryRun)
+        case "switch":
+            guard positionals.count >= 2 else { printError("usage: kittymgr theme switch <name>"); return 2 }
+            return runBlock(.themeSwitch(name: positionals[1]), dryRun: dryRun)
+        case "remove":
+            guard positionals.count >= 2 else { printError("usage: kittymgr theme remove <name>"); return 2 }
+            return runBlock(.themeRemove(name: positionals[1]), dryRun: dryRun)
+        case let other?:
+            printError("unknown theme action: \(other)"); return 2
+        }
+    }
+
+    /// `key list | add '<chord> <action>' | remove <chord>`.
+    private static func runKey(_ options: [String], dryRun: Bool) -> Int32 {
+        let positionals = options.filter { !$0.hasPrefix("-") }
+        switch positionals.first {
+        case "list", nil:
+            return runBlock(.keyList, dryRun: dryRun)
+        case "add":
+            let spec = positionals.dropFirst().joined(separator: " ")
+            let parts = spec.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { printError("usage: kittymgr key add '<chord> <action>'"); return 2 }
+            return runBlock(.keyAdd(chord: parts[0], action: parts[1]), dryRun: dryRun)
+        case "remove":
+            guard positionals.count >= 2 else { printError("usage: kittymgr key remove <chord>"); return 2 }
+            return runBlock(.keyRemove(chord: positionals[1]), dryRun: dryRun)
+        case let other?:
+            printError("unknown key action: \(other)"); return 2
+        }
+    }
+
+    /// `snippet list | add <name> [--from <file>] | remove <name>`.
+    private static func runSnippet(_ options: [String], dryRun: Bool) -> Int32 {
+        let (from, rest) = extractOption("--from", from: options)
+        let positionals = rest.filter { !$0.hasPrefix("-") }
+        switch positionals.first {
+        case "list", nil:
+            return runBlock(.snippetList, dryRun: dryRun)
+        case "add":
+            guard positionals.count >= 2 else { printError("usage: kittymgr snippet add <name> [--from <file>]"); return 2 }
+            let content: String
+            if let from {
+                guard let text = try? String(contentsOfFile: from, encoding: .utf8) else {
+                    printError("cannot read snippet file: \(from)"); return 2
+                }
+                content = text
+            } else {
+                content = ""
+            }
+            return runBlock(.snippetAdd(name: positionals[1], content: content), dryRun: dryRun)
+        case "remove":
+            guard positionals.count >= 2 else { printError("usage: kittymgr snippet remove <name>"); return 2 }
+            return runBlock(.snippetRemove(name: positionals[1]), dryRun: dryRun)
+        case let other?:
+            printError("unknown snippet action: \(other)"); return 2
+        }
+    }
+
+    /// `kitten list | install <name> --from <path> | remove <name>`.
+    private static func runKitten(_ options: [String], dryRun: Bool) -> Int32 {
+        let (from, rest) = extractOption("--from", from: options)
+        let positionals = rest.filter { !$0.hasPrefix("-") }
+
+        let action: KittenCommand.Action
+        switch positionals.first {
+        case "list", nil:
+            action = .list
+        case "install":
+            guard positionals.count >= 2 else {
+                printError("usage: kittymgr kitten install <name> --from <path>")
+                return 2
+            }
+            guard let from else {
+                printError("usage: kittymgr kitten install <name> --from <path>")
+                return 2
+            }
+            action = .install(name: positionals[1], source: from)
+        case "remove":
+            guard positionals.count >= 2 else {
+                printError("usage: kittymgr kitten remove <name>")
+                return 2
+            }
+            action = .remove(name: positionals[1])
+        case let other?:
+            printError("unknown kitten action: \(other)")
+            return 2
+        }
+
+        do {
+            try KittenCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+            return 0
+        } catch {
+            printError("\(error)")
+            return 1
+        }
     }
 
     private static func runBackup(_ options: [String], dryRun: Bool) -> Int32 {
@@ -218,11 +422,18 @@ public enum KittymgrCLI {
           kittymgr create <name>        Create an empty profile.
           kittymgr delete <name> [-f]   Delete a profile (--force/-f skips confirmation).
           kittymgr switch <name> [-f]   Activate a profile (validates; -f overrides conflicts).
+          kittymgr apply                Re-compose & re-apply the active profile (validate; rollback on failure).
           kittymgr current              Print the active profile.
+          kittymgr profile <list|create|switch|delete|current> ...
+                                        Same operations grouped under one verb.
           kittymgr check <name>         Report conflicts and validation without switching.
           kittymgr plugin list          List plugins and their enabled state.
           kittymgr plugin enable <name> [--profile <name>]
           kittymgr plugin disable <name> [--profile <name>]
+          kittymgr theme <list|install|switch|remove> ...   Manage theme blocks (one active).
+          kittymgr key <list|add|remove> ...        Manage keybinding blocks (additive).
+          kittymgr snippet <list|add|remove> ...    Manage snippet blocks (additive).
+          kittymgr kitten <list|install|remove> ... Manage kittens (scripts; never auto-run).
           kittymgr backup create [--label <text>]   Snapshot the managed surface.
           kittymgr backup list          List snapshots (id, timestamp, label).
           kittymgr backup restore <id>  Restore a snapshot byte-for-byte.

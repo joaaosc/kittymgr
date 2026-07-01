@@ -28,15 +28,17 @@ public struct Activator {
     }
 
     /// Generate `active.conf` for `name` without reloading or moving the pointer.
+    /// Composes through `ProfileComposer`, so the active modular blocks (theme,
+    /// keys, snippets) are preserved across plugin changes.
     public func regenerate(_ name: ProfileName) throws {
-        let metadata = profileStore.metadata(for: name)
-        let includes = try IncludeBuilder.includes(
+        let configDir = ConfigDir(url: activeConf.deletingLastPathComponent().deletingLastPathComponent())
+        let composed = try ProfileComposer.compose(
             profile: name,
+            configDir: configDir,
             profileStore: profileStore,
-            pluginStore: pluginStore,
-            enabledPlugins: metadata.enabledPlugins
+            pluginStore: pluginStore
         )
-        let content = ActiveConf.render(profile: name.value, includes: includes)
+        let content = composed.plan.writes[configDir.relativePath(of: configDir.activeConf)] ?? ""
         try FileManager.default.createDirectory(
             at: activeConf.deletingLastPathComponent(),
             withIntermediateDirectories: true

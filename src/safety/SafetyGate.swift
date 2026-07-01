@@ -16,15 +16,18 @@ public enum SafetyGate {
         pluginStore: PluginStore,
         validator: any ConfigValidating
     ) throws -> SafetyReport {
-        let metadata = profileStore.metadata(for: profile)
-        let layers = try IncludeBuilder.layers(
+        // `profileStore.root` is `<configDir>/managed/profiles`; recover the config
+        // root so composition can see the active modular blocks.
+        let configDir = ConfigDir(url: profileStore.root.deletingLastPathComponent().deletingLastPathComponent())
+        let composed = try ProfileComposer.compose(
             profile: profile,
+            configDir: configDir,
             profileStore: profileStore,
-            pluginStore: pluginStore,
-            enabledPlugins: metadata.enabledPlugins
+            pluginStore: pluginStore
         )
-        let conflicts = ConflictDetector.detect(layers)
-        let validation = validator.validate(content: IncludeBuilder.compose(layers))
-        return SafetyReport(conflicts: conflicts, validation: validation)
+        return SafetyReport(
+            conflicts: composed.conflicts,
+            validation: validator.validate(content: composed.validationContent)
+        )
     }
 }

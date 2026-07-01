@@ -46,6 +46,9 @@ public struct ConfigDir: Sendable, Equatable {
     /// Root holding one isolated folder per installed kitten (executable scripts).
     public var kittensDir: URL { managedDir.appendingPathComponent("kittens") }
 
+    /// Cache of fetched remote sources (git checkouts, downloaded files).
+    public var cacheDir: URL { managedDir.appendingPathComponent(".cache").appendingPathComponent("sources") }
+
     /// Root holding versioned snapshots of the managed surface.
     public var backupsDir: URL { managedDir.appendingPathComponent("backups") }
 

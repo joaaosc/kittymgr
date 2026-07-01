@@ -14,6 +14,9 @@ clearly fenced `include` block and keeps all managed state in a dedicated
 - Atomic apply with rollback: `apply` (snapshot → write → validate → reload/rollback).
 - Modular blocks: `theme`, `key`, `snippet`.
 - Kittens (isolated scripts, never auto-run): `kitten list/install/remove`.
+- Remote sources: install themes/plugins/kittens from git/URL; `theme install <name>` pulls from the built-in catalog.
+- Declarative config: `kittymgr.toml` manifest, `manifest init/show`, `source add/list/remove`.
+- Reconcile & pin: `sync` (disk ↔ manifest, snapshot + rollback), `update` (refresh sources), `kittymgr.lock`.
 - Interactive TUI: `ui` (alias `pick`).
 
 ## Quickstart
@@ -73,7 +76,9 @@ kittymgr apply
 kittymgr apply --dry-run                       # Preview as a unified diff.
 
 # Modular blocks (compose on top of the active profile).
-kittymgr theme install gruvbox --from gruvbox.conf
+kittymgr theme install gruvbox                 # From the built-in kitty-themes catalog.
+kittymgr theme search gruv                     # Search the catalog.
+kittymgr theme install mytheme --git <url>     # Or from any git/URL source.
 kittymgr theme switch gruvbox                  # One active theme at a time.
 kittymgr key add 'ctrl+shift+e launch --type=tab'
 kittymgr snippet add tabs --from tabs.conf
@@ -82,6 +87,13 @@ kittymgr snippet add tabs --from tabs.conf
 kittymgr kitten install hello --from ./hello.py
 kittymgr kitten list                           # Prints the explicit invocation command.
 kittymgr kitten remove hello
+
+# Declarative config: describe everything in kittymgr.toml, then reconcile.
+kittymgr manifest init                         # Bootstrap the manifest from current state.
+kittymgr source add themes --git <url>         # Register a named remote source.
+kittymgr sync --dry-run                        # Preview disk -> manifest reconciliation.
+kittymgr sync                                  # Apply it (snapshot; rollback on failure).
+kittymgr update                                # Re-resolve sources, re-pin kittymgr.lock, sync.
 
 # Interactive terminal UI over all of the above.
 kittymgr ui
@@ -306,6 +318,61 @@ labeled snapshot (`kitten-install-<name>` / `kitten-remove-<name>`), so the hist
 records exactly what third-party code entered the configuration and when, and the
 change is reversible with `backup restore`. `--dry-run` reports the effect without
 copying or snapshotting.
+
+### Remote sources and the theme catalog
+
+Themes, plugins, and kittens can be installed from a `Source` — a git repository, a
+plain URL, or a local path — not just a local `--from`. `Source`
+(`src/source/Source.swift`) models the location and its pin (git `ref`); a
+`DefaultSourceFetcher` (`src/source/SourceFetcher.swift`) clones git repos
+(`git clone --depth 1`, resolving the commit with `rev-parse`), downloads URLs, or
+points at a local path, caching everything under `managed/.cache/sources/<hash>`.
+The fetcher is a protocol, so higher layers are tested with a stub — no network or
+git in the unit suite. The cache is **excluded from the snapshot surface** (like
+`backups/`), so fetched repositories never bloat the history.
+
+`RemoteInstaller` (`src/source/RemoteInstaller.swift`) orchestrates fetch →
+install, reusing the existing pipeline: themes route through `BlockCommand` (so a
+remote theme is validated and composed like any block), kittens through
+`KittenStore` (snapshot-audited, still never executed), and plugin bundles are
+staged atomically under `managed/plugins/<name>/`. `theme install <name>` with no
+source resolves the name from the built-in `kitty-themes` catalog (exact match,
+else a unique loose match); `theme search <q>` lists candidates. Every install
+records provenance and, for remote installs, takes an audit snapshot. Security is
+unchanged: fetched code is copied, never run.
+
+### Declarative manifest (kittymgr.toml)
+
+`kittymgr.toml` describes the configuration as code: `[settings]` (active profile
+and theme), `[profiles.<name>]` (enabled `plugins`, optional `description`), and
+`[[sources]]` (named git/URL sources). It is parsed and written by a small,
+deliberately incomplete TOML reader (`src/manifest/TOMLLite.swift`) that supports
+only strings, bools, string-arrays, named tables, arrays-of-tables, and `#`
+comments — anything else is a parse error with a line number. `Manifest`
+(`src/manifest/Manifest.swift`) is the model plus `fromDisk` bootstrap. The
+manifest is **opt-in**: `manifest init` generates it from the current on-disk state,
+`manifest show` prints it, and `source add/list/remove` edit the `[[sources]]`
+tables. Applying it back to disk is `sync` (below). v1 scope is the reproducible
+state (active selection, per-profile plugins, sources); block content stays
+imperative for now.
+
+### Reconcile (sync), lockfile, and update
+
+`sync` (`src/manifest/Synchronizer.swift`) reconciles the on-disk state to
+`kittymgr.toml` — the `:Lazy sync` of kittymgr. It creates missing profiles, sets
+each profile's enabled plugins to the manifest, applies the active theme, then
+recomposes and activates the target profile. The whole reconcile is
+snapshot-protected: it captures a `pre-sync` snapshot, applies, validates, and
+rolls the entire managed surface back if validation fails. `sync --dry-run`
+previews the full reconciliation as a unified diff and writes nothing — it applies
+to a scratch state, diffs, restores from an in-memory capture, and prunes any
+directory the preview created so no phantom profile is left behind. Sources named
+in the manifest are pinned in `kittymgr.lock` (`src/manifest/Lockfile.swift`, JSON,
+machine-generated) so a `sync` on another machine reproduces the same versions.
+`update [<source>]` (`src/commands/UpdateCommand.swift`) invalidates the source
+cache, re-resolves to the newest commit, re-pins the lock, and runs `sync`. v1
+reconciles the declarative *state* (active selection, per-profile plugins,
+sources); installing artifacts from sources during sync is a documented follow-up.
 
 ### Interactive TUI
 

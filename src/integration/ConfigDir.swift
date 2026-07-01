@@ -55,6 +55,12 @@ public struct ConfigDir: Sendable, Equatable {
     /// Managed entry point referenced by the injected `include` line.
     public var activeConf: URL { managedDir.appendingPathComponent("active.conf") }
 
+    /// User-facing declarative manifest (TOML-like v1).
+    public var manifestFile: URL { url.appendingPathComponent("kittymgr.toml") }
+
+    /// Machine-generated lockfile pinning resolved source versions.
+    public var lockFile: URL { url.appendingPathComponent("kittymgr.lock") }
+
     /// Authoritative pointer to the currently active profile.
     public var activePointerFile: URL { managedDir.appendingPathComponent(".kittymgr-active") }
 

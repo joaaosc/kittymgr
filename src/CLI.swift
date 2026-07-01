@@ -213,25 +213,49 @@ public enum KittymgrCLI {
         }
     }
 
-    /// `theme list | install <name> [--from <file>] | switch <name> | remove <name>`.
+    /// Parse a source out of `--from <path>` / `--git <url> [--ref <r>]` / `--url <u>`.
+    /// Returns the source (nil = use the built-in catalog) and the remaining args.
+    private static func extractSource(_ options: [String]) -> (Source?, [String]) {
+        let from = extractOption("--from", from: options)
+        if let path = from.value {
+            return (Source(name: "local", kind: .local(path: path)), from.rest)
+        }
+        let git = extractOption("--git", from: from.rest)
+        let ref = extractOption("--ref", from: git.rest)
+        if let url = git.value {
+            return (Source(name: "remote", kind: .git(url: url, ref: ref.value)), ref.rest)
+        }
+        let url = extractOption("--url", from: ref.rest)
+        if let location = url.value {
+            return (Source(name: "remote", kind: .url(location)), url.rest)
+        }
+        return (nil, url.rest)
+    }
+
+    private static func runRemote(dryRun: Bool, _ body: (RemoteInstaller) throws -> Void) -> Int32 {
+        do {
+            try body(RemoteInstaller(configDir: ConfigDir.resolve(), dryRun: dryRun))
+            return 0
+        } catch {
+            printError("\(error)")
+            return 1
+        }
+    }
+
+    /// `theme list | search <q> | install <name> [--from|--git|--url] | switch <name> | remove <name>`.
+    /// With no source flag, `install` resolves the name from the built-in catalog.
     private static func runTheme(_ options: [String], dryRun: Bool) -> Int32 {
-        let (from, rest) = extractOption("--from", from: options)
+        let (source, rest) = extractSource(options)
         let positionals = rest.filter { !$0.hasPrefix("-") }
         switch positionals.first {
         case "list", nil:
             return runBlock(.themeList, dryRun: dryRun)
+        case "search":
+            let query = positionals.count >= 2 ? positionals[1] : ""
+            return runRemote(dryRun: dryRun) { try $0.searchThemes(query: query) }
         case "install":
-            guard positionals.count >= 2 else { printError("usage: kittymgr theme install <name> [--from <file>]"); return 2 }
-            let content: String
-            if let from {
-                guard let text = try? String(contentsOfFile: from, encoding: .utf8) else {
-                    printError("cannot read theme file: \(from)"); return 2
-                }
-                content = text
-            } else {
-                content = ""
-            }
-            return runBlock(.themeInstall(name: positionals[1], content: content), dryRun: dryRun)
+            guard positionals.count >= 2 else { printError("usage: kittymgr theme install <name> [--from|--git|--url]"); return 2 }
+            return runRemote(dryRun: dryRun) { try $0.installTheme(name: positionals[1], source: source) }
         case "switch":
             guard positionals.count >= 2 else { printError("usage: kittymgr theme switch <name>"); return 2 }
             return runBlock(.themeSwitch(name: positionals[1]), dryRun: dryRun)
@@ -289,38 +313,88 @@ public enum KittymgrCLI {
         }
     }
 
-    /// `kitten list | install <name> --from <path> | remove <name>`.
+    /// `kitten list | install <name> --from|--git|--url | remove <name>`.
     private static func runKitten(_ options: [String], dryRun: Bool) -> Int32 {
-        let (from, rest) = extractOption("--from", from: options)
+        let (source, rest) = extractSource(options)
         let positionals = rest.filter { !$0.hasPrefix("-") }
 
-        let action: KittenCommand.Action
         switch positionals.first {
-        case "list", nil:
-            action = .list
         case "install":
             guard positionals.count >= 2 else {
-                printError("usage: kittymgr kitten install <name> --from <path>")
+                printError("usage: kittymgr kitten install <name> --from|--git|--url <source>")
                 return 2
             }
-            guard let from else {
-                printError("usage: kittymgr kitten install <name> --from <path>")
+            guard let source else {
+                printError("kitten install needs a source: --from <path>, --git <url>, or --url <u>")
                 return 2
             }
-            action = .install(name: positionals[1], source: from)
-        case "remove":
-            guard positionals.count >= 2 else {
-                printError("usage: kittymgr kitten remove <name>")
-                return 2
+            return runRemote(dryRun: dryRun) { try $0.installKitten(name: positionals[1], source: source) }
+        case "list", nil, "remove":
+            let action: KittenCommand.Action
+            if positionals.first == "remove" {
+                guard positionals.count >= 2 else { printError("usage: kittymgr kitten remove <name>"); return 2 }
+                action = .remove(name: positionals[1])
+            } else {
+                action = .list
             }
-            action = .remove(name: positionals[1])
+            do {
+                try KittenCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+                return 0
+            } catch {
+                printError("\(error)")
+                return 1
+            }
         case let other?:
             printError("unknown kitten action: \(other)")
             return 2
         }
+    }
 
+    /// `manifest init [--force] | show`.
+    private static func runManifest(_ options: [String], dryRun: Bool) -> Int32 {
+        let positionals = options.filter { !$0.hasPrefix("-") }
+        let force = options.contains("--force")
+        let action: ManifestCommand.Action
+        switch positionals.first {
+        case "show", nil: action = .show
+        case "init": action = .initialize(force: force)
+        case let other?: printError("unknown manifest action: \(other)"); return 2
+        }
         do {
-            try KittenCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+            try ManifestCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+            return 0
+        } catch {
+            printError("\(error)")
+            return 1
+        }
+    }
+
+    /// `source list | add <name> --git <url>|--url <u> [--ref <r>] | remove <name>`.
+    private static func runSource(_ options: [String], dryRun: Bool) -> Int32 {
+        let git = extractOption("--git", from: options)
+        let url = extractOption("--url", from: git.rest)
+        let ref = extractOption("--ref", from: url.rest)
+        let positionals = ref.rest.filter { !$0.hasPrefix("-") }
+
+        let action: ManifestCommand.Action
+        switch positionals.first {
+        case "list", nil:
+            action = .sourceList
+        case "add":
+            guard positionals.count >= 2 else { printError("usage: kittymgr source add <name> --git <url>|--url <u> [--ref <r>]"); return 2 }
+            guard git.value != nil || url.value != nil else {
+                printError("source add needs --git <url> or --url <u>")
+                return 2
+            }
+            action = .sourceAdd(SourceSpec(name: positionals[1], git: git.value, url: url.value, ref: ref.value))
+        case "remove":
+            guard positionals.count >= 2 else { printError("usage: kittymgr source remove <name>"); return 2 }
+            action = .sourceRemove(positionals[1])
+        case let other?:
+            printError("unknown source action: \(other)"); return 2
+        }
+        do {
+            try ManifestCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
             return 0
         } catch {
             printError("\(error)")
@@ -358,10 +432,23 @@ public enum KittymgrCLI {
         }
     }
 
-    private static func runPlugin(_ options: [String]) -> Int32 {
+    private static func runPlugin(_ options: [String], dryRun: Bool) -> Int32 {
         let dir = ConfigDir.resolve()
-        let (profileOverride, rest) = extractOption("--profile", from: options)
+        let (source, afterSource) = extractSource(options)
+        let (profileOverride, rest) = extractOption("--profile", from: afterSource)
         let positionals = rest.filter { !$0.hasPrefix("-") }
+
+        if positionals.first == "install" {
+            guard positionals.count >= 2 else {
+                printError("usage: kittymgr plugin install <name> --git|--url|--from <source>")
+                return 2
+            }
+            guard let source else {
+                printError("plugin install needs a source: --git <url>, --url <u>, or --from <path>")
+                return 2
+            }
+            return runRemote(dryRun: dryRun) { try $0.installPlugin(name: positionals[1], source: source) }
+        }
 
         let action: PluginCommand.Action
         switch positionals.first {
@@ -441,10 +528,19 @@ public enum KittymgrCLI {
           kittymgr plugin list          List plugins and their enabled state.
           kittymgr plugin enable <name> [--profile <name>]
           kittymgr plugin disable <name> [--profile <name>]
-          kittymgr theme <list|install|switch|remove> ...   Manage theme blocks (one active).
+          kittymgr theme install <name>             Install a theme from the built-in catalog.
+          kittymgr theme <search|list|switch|remove> ...   Search catalog / manage theme blocks.
           kittymgr key <list|add|remove> ...        Manage keybinding blocks (additive).
           kittymgr snippet <list|add|remove> ...    Manage snippet blocks (additive).
-          kittymgr kitten <list|install|remove> ... Manage kittens (scripts; never auto-run).
+          kittymgr plugin install <name> --git <url>       Install a plugin bundle from a source.
+          kittymgr kitten install <name> --git <url>       Install a kitten from a source (never auto-run).
+
+        Sources (for theme/plugin/kitten install): --from <path>, --git <url> [--ref <r>], --url <u>.
+
+          kittymgr manifest <init|show>             Author/inspect the declarative kittymgr.toml.
+          kittymgr source <list|add|remove> ...     Manage named remote sources in the manifest.
+          kittymgr sync                             Reconcile disk to kittymgr.toml (snapshot; rollback on failure).
+          kittymgr update [<source>]                Re-resolve sources, re-pin the lock, and sync.
           kittymgr backup create [--label <text>]   Snapshot the managed surface.
           kittymgr backup list          List snapshots (id, timestamp, label).
           kittymgr backup restore <id>  Restore a snapshot byte-for-byte.

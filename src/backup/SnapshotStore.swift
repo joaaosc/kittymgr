@@ -129,6 +129,22 @@ public struct SnapshotStore {
         }
     }
 
+    /// Restore the tracked surface to a previously captured in-memory content map
+    /// (from `currentContents()`). Used to revert a previewed change without
+    /// creating a history entry.
+    public func restore(toContents contents: [String: String]) throws {
+        let fm = FileManager.default
+        let wanted = Set(contents.keys)
+        for file in trackedFiles() where !wanted.contains(relativePath(of: file)) {
+            try fm.removeItem(at: file)
+        }
+        for (path, text) in contents {
+            let destination = configDir.url.appendingPathComponent(path)
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: destination, atomically: true, encoding: .utf8)
+        }
+    }
+
     // MARK: State (for diffing)
 
     /// Current text contents of the managed surface keyed by relative path.
@@ -155,7 +171,8 @@ public struct SnapshotStore {
     // MARK: Tracked surface
 
     /// The managed surface: `kitty.conf` plus every regular file under `managed/`,
-    /// excluding the backup store itself. Sorted for deterministic snapshots.
+    /// excluding the backup store and the source cache. Sorted for deterministic
+    /// snapshots.
     func trackedFiles() -> [URL] {
         let fm = FileManager.default
         var result: [URL] = []
@@ -164,7 +181,12 @@ public struct SnapshotStore {
             result.append(configDir.kittyConf)
         }
 
-        let backupsPath = configDir.backupsDir.standardizedFileURL.path
+        // Never snapshot the backup store or the remote-source cache: both live
+        // under managed/ but are derived data, not part of the configuration.
+        let excluded: Set<String> = [
+            configDir.backupsDir.standardizedFileURL.path,
+            configDir.managedDir.appendingPathComponent(".cache").standardizedFileURL.path,
+        ]
         if let enumerator = fm.enumerator(
             at: configDir.managedDir,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -172,7 +194,7 @@ public struct SnapshotStore {
         ) {
             for case let url as URL in enumerator {
                 let path = url.standardizedFileURL.path
-                if path == backupsPath {
+                if excluded.contains(path) {
                     enumerator.skipDescendants()
                     continue
                 }

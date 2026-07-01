@@ -43,6 +43,9 @@ public struct ConfigDir: Sendable, Equatable {
     /// Root holding one folder per available plugin.
     public var pluginsDir: URL { managedDir.appendingPathComponent("plugins") }
 
+    /// Root holding one isolated folder per installed kitten (executable scripts).
+    public var kittensDir: URL { managedDir.appendingPathComponent("kittens") }
+
     /// Root holding versioned snapshots of the managed surface.
     public var backupsDir: URL { managedDir.appendingPathComponent("backups") }
 
@@ -54,6 +57,18 @@ public struct ConfigDir: Sendable, Equatable {
 
     /// Sidecar state used to make `uninstall` an exact inverse of `init`.
     public var metaFile: URL { managedDir.appendingPathComponent(".kittymgr-meta") }
+
+    /// Path of `url` relative to the config directory root, e.g.
+    /// `managed/active.conf`. Falls back to the last path component for URLs that
+    /// do not live under the root.
+    public func relativePath(of url: URL) -> String {
+        let base = self.url.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        if path.hasPrefix(base + "/") {
+            return String(path.dropFirst(base.count + 1))
+        }
+        return url.lastPathComponent
+    }
 
     private static func nonEmpty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }

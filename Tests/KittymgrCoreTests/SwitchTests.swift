@@ -139,6 +139,27 @@ struct SwitchCommandTests {
         #expect(fixture.pointer.get() == "work")
     }
 
+    @Test func dryRunSwitchPreviewsWithoutWritingOrRecording() throws {
+        let fixture = try makeFixture()
+        try seed(fixture.profileStore, profile: "work", files: ["00-base.conf"])
+
+        var captured: [String] = []
+        try SwitchCommand(
+            profileStore: fixture.profileStore,
+            pluginStore: fixture.pluginStore,
+            activePointer: fixture.pointer,
+            activeConf: fixture.activeConf,
+            rawName: "work",
+            dryRun: true,
+            validator: StubValidator(.valid),
+            reloader: StubReloader(.reloaded)
+        ).run { captured.append($0) }
+
+        #expect(captured.joined(separator: "\n").contains("[dry-run]"))
+        #expect(fixture.pointer.get() == nil)
+        #expect(fileManager.fileExists(atPath: fixture.activeConf.path) == false)
+    }
+
     @Test func switchEmptyProfileWritesNoIncludes() throws {
         let fixture = try makeFixture()
         try seed(fixture.profileStore, profile: "empty", files: [])

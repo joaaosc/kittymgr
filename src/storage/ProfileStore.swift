@@ -114,6 +114,15 @@ public struct ProfileStore {
 
     // MARK: - Internals
 
+    /// Resolves `name` to the exact case-sensitive name present on disk if a
+    /// case-insensitive match is found; otherwise returns `name` unchanged.
+    public func resolveName(_ name: ProfileName) throws -> ProfileName {
+        if let existing = try existingNameMatching(name) {
+            return try ProfileName(validating: existing)
+        }
+        return name
+    }
+
     private func existingNameMatching(_ name: ProfileName) throws -> String? {
         let target = name.value.lowercased()
         return try list().first { $0.lowercased() == target }

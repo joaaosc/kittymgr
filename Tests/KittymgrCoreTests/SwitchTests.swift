@@ -169,6 +169,16 @@ struct SwitchCommandTests {
         #expect(content.contains("include ") == false)
         #expect(fixture.pointer.get() == "empty")
     }
+
+    @Test func switchResolvesCasingToOnDiskCasing() throws {
+        let fixture = try makeFixture()
+        try seed(fixture.profileStore, profile: "Work", files: ["a.conf"])
+        let reloader = StubReloader(.reloaded)
+
+        try makeCommand(fixture, profile: "work", reloader: reloader).run(log: silent)
+
+        #expect(fixture.pointer.get() == "Work")
+    }
 }
 
 struct CurrentCommandTests {

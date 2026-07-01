@@ -85,7 +85,7 @@ public struct Synchronizer {
         let installed = Set((try? pluginStore.list())?.map(\.name) ?? [])
 
         for spec in manifest.profiles {
-            let name = try ProfileName(validating: spec.name)
+            let name = try profileStore.resolveName(ProfileName(validating: spec.name))
             if !profileStore.exists(name) {
                 _ = try profileStore.create(name)
                 log("Created profile '\(name.value)'.")
@@ -109,7 +109,7 @@ public struct Synchronizer {
         }
 
         guard let active = manifest.activeProfile else { return "" }
-        let activeName = try ProfileName(validating: active)
+        let activeName = try profileStore.resolveName(ProfileName(validating: active))
         guard profileStore.exists(activeName) else { throw ProfileError.notFound(active) }
 
         let composed = try ProfileComposer.compose(

@@ -44,7 +44,7 @@ public struct SwitchCommand {
     }
 
     public func run(log: (String) -> Void = { print($0) }) throws {
-        let name = try ProfileName(validating: rawName)
+        let name = try profileStore.resolveName(ProfileName(validating: rawName))
         guard profileStore.exists(name) else {
             throw ProfileError.notFound(name.value)
         }

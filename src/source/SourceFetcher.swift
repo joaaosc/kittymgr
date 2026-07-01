@@ -42,6 +42,15 @@ public struct DefaultSourceFetcher: SourceFetching {
     // MARK: - git
 
     private func fetchGit(url: String, ref: String?, destination: URL) throws -> FetchedSource {
+        guard !url.hasPrefix("-") else {
+            throw SourceError.fetchFailed(source: url, detail: "git URL cannot start with '-'")
+        }
+        if let ref {
+            guard !ref.hasPrefix("-") else {
+                throw SourceError.fetchFailed(source: url, detail: "git ref cannot start with '-'")
+            }
+        }
+
         // Reuse an existing checkout; refreshing to a newer ref is `update`'s job.
         if !fileManager.fileExists(atPath: destination.path) {
             try fileManager.createDirectory(at: cacheDir, withIntermediateDirectories: true)
@@ -49,7 +58,7 @@ public struct DefaultSourceFetcher: SourceFetching {
 
             var cloneArgs = ["clone", "--depth", "1"]
             if let ref { cloneArgs += ["--branch", ref] }
-            cloneArgs += [url, staging.path]
+            cloneArgs += ["--", url, staging.path]
 
             let clone = try run("git", cloneArgs)
             if clone.status != 0 {
@@ -57,7 +66,7 @@ public struct DefaultSourceFetcher: SourceFetching {
                 // clone followed by an explicit checkout.
                 try? fileManager.removeItem(at: staging)
                 if let ref {
-                    let full = try run("git", ["clone", url, staging.path])
+                    let full = try run("git", ["clone", "--", url, staging.path])
                     guard full.status == 0 else {
                         throw SourceError.fetchFailed(source: url, detail: full.stderr)
                     }

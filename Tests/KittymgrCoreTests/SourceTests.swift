@@ -105,4 +105,14 @@ struct SourceTests {
         #expect(second.root.path == first.root.path)
         #expect(second.resolvedRef == first.resolvedRef)
     }
+
+    @Test func fetchGitOptionInjectionThrows() {
+        let fetcher = DefaultSourceFetcher(cacheDir: tempDir())
+        #expect(throws: SourceError.self) {
+            try fetcher.fetch(Source(name: "x", kind: .git(url: "-oProxyCommand=touch/tmp/pwned", ref: nil)))
+        }
+        #expect(throws: SourceError.self) {
+            try fetcher.fetch(Source(name: "x", kind: .git(url: "https://github.com/foo/bar", ref: "--upload-pack=touch/tmp/pwned")))
+        }
+    }
 }

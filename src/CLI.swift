@@ -97,7 +97,7 @@ public enum KittymgrCLI {
                 try CurrentCommand(activePointer: ActivePointer(url: dir.activePointerFile)).run()
                 return 0
             case "plugin":
-                return runPlugin(options)
+                return runPlugin(options, dryRun: dryRun)
             case "profile":
                 return runProfile(options, dryRun: dryRun)
             case "theme":
@@ -108,6 +108,17 @@ public enum KittymgrCLI {
                 return runSnippet(options, dryRun: dryRun)
             case "kitten":
                 return runKitten(options, dryRun: dryRun)
+            case "manifest":
+                return runManifest(options, dryRun: dryRun)
+            case "source":
+                return runSource(options, dryRun: dryRun)
+            case "sync":
+                try Synchronizer(configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+                return 0
+            case "update":
+                let target = options.first { !$0.hasPrefix("-") }
+                try UpdateCommand(configDir: ConfigDir.resolve(), target: target, dryRun: dryRun).run()
+                return 0
             case "backup":
                 return runBackup(options, dryRun: dryRun)
             case "apply":

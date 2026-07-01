@@ -98,6 +98,52 @@ struct PickerTests {
         #expect(fileManager.fileExists(atPath: fixture.activeConf.path) == false)
     }
 
+    @Test func switchThemeFromPicker() throws {
+        let fixture = try makeFixture()
+        let dir = try fixture.profileStore.create(try ProfileName(validating: "work"))
+        try "font_size 12\n".write(to: dir.appendingPathComponent("base.conf"), atomically: true, encoding: .utf8)
+        try fixture.pointer.set(try ProfileName(validating: "work"))
+
+        // Install a theme file directly under managed/themes/.
+        let themesDir = fixture.activeConf.deletingLastPathComponent().appendingPathComponent("themes")
+        try fileManager.createDirectory(at: themesDir, withIntermediateDirectories: true)
+        try "background #282828\n".write(to: themesDir.appendingPathComponent("gruvbox.conf"), atomically: true, encoding: .utf8)
+
+        _ = try drive(makePicker(fixture), inputs: ["theme gruvbox", "q"])
+        let active = try String(contentsOf: fixture.activeConf, encoding: .utf8)
+        #expect(active.contains("include themes/gruvbox.conf"))
+    }
+
+    @Test func createSnapshotFromPicker() throws {
+        let fixture = try makeFixture()
+        _ = try fixture.profileStore.create(try ProfileName(validating: "work"))
+
+        _ = try drive(makePicker(fixture), inputs: ["snap demo", "q"])
+
+        let configDir = ConfigDir(url: fixture.activeConf.deletingLastPathComponent().deletingLastPathComponent())
+        #expect(SnapshotStore(configDir: configDir).list().contains { $0.label == "demo" })
+    }
+
+    @Test func restorePreviewShowsDiffWithoutApplying() throws {
+        let fixture = try makeFixture()
+        let dir = try fixture.profileStore.create(try ProfileName(validating: "work"))
+        let base = dir.appendingPathComponent("base.conf")
+        try "font_size 12\n".write(to: base, atomically: true, encoding: .utf8)
+
+        let configDir = ConfigDir(url: fixture.activeConf.deletingLastPathComponent().deletingLastPathComponent())
+        let snapshot = try SnapshotStore(configDir: configDir).create(label: "pre")
+        try "font_size 99\n".write(to: base, atomically: true, encoding: .utf8)
+
+        // Preview: prints a diff, changes nothing.
+        let preview = try drive(makePicker(fixture), inputs: ["restore \(snapshot.id)", "q"]).joined(separator: "\n")
+        #expect(preview.contains("[dry-run]"))
+        #expect(try String(contentsOf: base, encoding: .utf8) == "font_size 99\n")
+
+        // Apply: restores the snapshot.
+        _ = try drive(makePicker(fixture), inputs: ["restore! \(snapshot.id)", "q"])
+        #expect(try String(contentsOf: base, encoding: .utf8) == "font_size 12\n")
+    }
+
     @Test func conflictBlocksSelectionUntilForced() throws {
         let fixture = try makeFixture()
         let dir = try fixture.profileStore.create(try ProfileName(validating: "work"))

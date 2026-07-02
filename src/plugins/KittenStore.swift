@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Provenance for an installed kitten: where it came from, when it was installed,
 /// its checksum (for a single-file kitten), and the entry file to invoke.

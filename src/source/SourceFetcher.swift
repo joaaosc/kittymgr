@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Fetches a `Source` into the local cache. Injectable so higher layers (install,
 /// sync) can be tested with a stub that never touches the network or git.
@@ -7,10 +11,15 @@ public protocol SourceFetching {
     func fetch(_ source: Source) throws -> FetchedSource
     /// Drop any cached copy so the next fetch re-resolves (used by `update`).
     func invalidate(_ source: Source)
+    /// Resolve the newest commit a git source's ref points to on the remote,
+    /// *without* fetching or mutating the cache. Returns nil when not applicable
+    /// (URL/local sources) or unresolvable. Used by `update --check`.
+    func resolveLatest(_ source: Source) throws -> String?
 }
 
 public extension SourceFetching {
     func invalidate(_ source: Source) {}
+    func resolveLatest(_ source: Source) throws -> String? { nil }
 }
 
 /// Default fetcher: git repositories via the `git` binary, URLs via a synchronous
@@ -37,6 +46,38 @@ public struct DefaultSourceFetcher: SourceFetching {
 
     public func invalidate(_ source: Source) {
         try? fileManager.removeItem(at: cacheEntry(for: source))
+    }
+
+    /// Resolve the remote's current commit for a git source via `git ls-remote`
+    /// (no clone, no cache write). A full commit SHA is already pinned and returned
+    /// as-is; a tag resolves to its (stable) commit; a branch or the default HEAD
+    /// resolves to the current tip — so only floating refs can appear "outdated".
+    public func resolveLatest(_ source: Source) throws -> String? {
+        guard case let .git(url, ref) = source.kind else { return nil }
+        guard !url.hasPrefix("-") else {
+            throw SourceError.fetchFailed(source: url, detail: "git URL cannot start with '-'")
+        }
+        if let ref, ref.hasPrefix("-") {
+            throw SourceError.fetchFailed(source: url, detail: "git ref cannot start with '-'")
+        }
+        if let ref, Self.isFullCommitSHA(ref) { return ref }
+
+        let result = try run("git", ["ls-remote", url, ref ?? "HEAD"])
+        guard result.status == 0 else {
+            throw SourceError.fetchFailed(source: url, detail: result.stderr)
+        }
+        return Self.parseLsRemote(result.stdout)
+    }
+
+    private static func isFullCommitSHA(_ ref: String) -> Bool {
+        (ref.count == 40 || ref.count == 64) && ref.allSatisfy(\.isHexDigit)
+    }
+
+    private static func parseLsRemote(_ stdout: String) -> String? {
+        let lines = stdout.split(separator: "\n").map(String.init)
+        // Prefer the dereferenced tag commit (`<ref>^{}`) when present.
+        let chosen = lines.first(where: { $0.contains("^{}") }) ?? lines.first
+        return chosen?.split(whereSeparator: { $0 == "\t" || $0 == " " }).first.map(String.init)
     }
 
     // MARK: - git
@@ -122,8 +163,13 @@ public struct DefaultSourceFetcher: SourceFetching {
     // MARK: - Helpers
 
     private func cacheEntry(for source: Source) -> URL {
-        let digest = Self.sha256(Data(source.cacheKey.utf8)).prefix(16)
-        return cacheDir.appendingPathComponent(String(digest))
+        cacheDir.appendingPathComponent(Self.cacheDirectoryName(for: source))
+    }
+
+    /// The cache subdirectory name a source resolves to. Exposed so `clean` can tell
+    /// which cache entries still belong to a manifest source and which are orphans.
+    public static func cacheDirectoryName(for source: Source) -> String {
+        String(sha256(Data(source.cacheKey.utf8)).prefix(16))
     }
 
     private static func sha256(_ data: Data) -> String {

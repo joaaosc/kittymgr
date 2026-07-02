@@ -15,9 +15,23 @@ clearly fenced `include` block and keeps all managed state in a dedicated
 - Modular blocks: `theme`, `key`, `snippet`.
 - Kittens (isolated scripts, never auto-run): `kitten list/install/remove`.
 - Remote sources: install themes/plugins/kittens from git/URL; `theme install <name>` pulls from the built-in catalog.
-- Declarative config: `kittymgr.toml` manifest, `manifest init/show`, `source add/list/remove`.
-- Reconcile & pin: `sync` (disk ↔ manifest, snapshot + rollback), `update` (refresh sources), `kittymgr.lock`.
-- Interactive TUI: `ui` (alias `pick`).
+- Declarative config: `kittymgr.toml` manifest (schema v2 — active selection, per-profile plugins, `keys`/`snippets` slugs, `[[sources]]`, and `[[themes]]`/`[[plugins]]`/`[[kittens]]`), `manifest init/show`, `source add/list/remove`.
+- Reconcile & pin: `sync` (disk ↔ manifest; installs declared artifacts; snapshot + rollback), `update` / `update --check`, `kittymgr.lock`.
+- Health & cleanup: `doctor` (environment + store integrity), `clean` (prune orphan caches/backups; `--artifacts --force` also prunes unused themes/plugins/kittens).
+- Interactive TUI: `ui` (alias `pick`). Version: `kittymgr --version`.
+
+## Requirements
+
+- A Swift 6 toolchain (SwiftPM). macOS 13+.
+- Optional at runtime: `kitty` (config validation + live reload) and `git` (git
+  sources); both degrade gracefully when absent — run `kittymgr doctor` to see what
+  is available.
+
+Portability: the domain logic is Foundation-only, and SHA-256 uses CryptoKit on
+Apple platforms and [swift-crypto](https://github.com/apple/swift-crypto) on Linux,
+so the package is intended to build on macOS and Linux. The macOS build and tests
+are the ones exercised in this repo; verify a Linux build with
+`docker run --rm -v "$PWD":/app -w /app swift:6.0 bash -lc "swift build && swift test"`.
 
 ## Quickstart
 
@@ -33,10 +47,13 @@ swift build
 Nothing is irreversible: every mutating command snapshots first, `--dry-run`
 previews any change as a unified diff, and `backup restore <id>` rolls back.
 
-## Build
+## Build & install
 
 ```sh
-swift build
+swift build                        # debug build at .build/debug/kittymgr
+swift build -c release             # optimized build at .build/release/kittymgr
+install -m 0755 .build/release/kittymgr /usr/local/bin/kittymgr   # put it on PATH
+kittymgr --version
 ```
 
 ## Usage
@@ -94,6 +111,12 @@ kittymgr source add themes --git <url>         # Register a named remote source.
 kittymgr sync --dry-run                        # Preview disk -> manifest reconciliation.
 kittymgr sync                                  # Apply it (snapshot; rollback on failure).
 kittymgr update                                # Re-resolve sources, re-pin kittymgr.lock, sync.
+kittymgr update --check                        # Report which sources have newer commits (writes nothing).
+
+# Health and cleanup.
+kittymgr doctor                                # Environment + managed-store health (OK/WARN/FAIL).
+kittymgr clean                                 # Remove orphan source caches and backup objects.
+kittymgr clean --artifacts --force             # Also prune themes/plugins/kittens nothing references.
 
 # Interactive terminal UI over all of the above.
 kittymgr ui
@@ -178,6 +201,39 @@ disabling a plugin leaves no residual lines:
 `plugin enable`/`plugin disable` apply to the active profile by default, or to
 `--profile <name>`. Changes to the active profile regenerate `active.conf` and
 reload immediately.
+
+## Declarative manifest (kittymgr.toml)
+
+`kittymgr.toml` describes the reproducible configuration as code (schema v2). A v1
+manifest (without `schema_version` or the artifact tables) still loads and is
+migrated to v2 on the next write.
+
+```toml
+[settings]
+schema_version = 2
+active_profile = "work"
+active_theme   = "gruvbox"
+keys           = ["ctrl-shift-e"]   # slugs; content lives in managed/keys/<slug>.conf
+snippets       = ["tabs"]           # slugs; content lives in managed/snippets/<slug>.conf
+
+[profiles.work]
+plugins = ["theme-sample"]
+
+[[sources]]
+name = "kitty-themes"
+git  = "https://github.com/kovidgoyal/kitty-themes"
+
+[[themes]]
+name = "gruvbox"
+from = "kitty-themes"
+```
+
+`manifest init` bootstraps the file from the current on-disk state. Installed
+themes/plugins/kittens are written with an empty `from` (their origin is not
+recorded on disk) and a note asks you to set each `from` to a `[[sources]]` name;
+once set, `sync` installs any missing artifact before reconciling. `keys` and
+`snippets` are captured by slug — their content stays in
+`managed/keys|snippets/<slug>.conf`, so commit those files to reproduce it.
 
 ## Config directory resolution
 

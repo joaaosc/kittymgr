@@ -106,6 +106,21 @@ struct SynchronizerTests {
         #expect(try ProfileStore(root: dir.profilesDir).list() == ["work"])
     }
 
+    @Test func dryRunPreservesPreexistingBinaryFilesByteForByte() throws {
+        let dir = try makeFixture(manifest: manifest)
+        // A binary file under managed/ that no manifest entry references. A text-only
+        // capture would skip it and the preview's restore would delete it.
+        let binary = Data([0x00, 0x01, 0x02, 0xff, 0xfe, 0x80, 0x00, 0x7f])
+        let binURL = dir.managedDir.appendingPathComponent("kittens/tool/bin")
+        try fm.createDirectory(at: binURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try binary.write(to: binURL)
+
+        try synchronizer(dir, dryRun: true).run { _ in }
+
+        #expect(fm.fileExists(atPath: binURL.path))
+        #expect(try Data(contentsOf: binURL) == binary)
+    }
+
     @Test func invalidSyncRollsBack() throws {
         let dir = try makeFixture(manifest: manifest)
         let before = SnapshotStore(configDir: dir).currentContents()
@@ -141,5 +156,185 @@ struct SynchronizerTests {
             .run(log: { _ in })
         #expect(fetcher.invalidations >= 1)
         #expect(Lockfile.load(dir.lockFile).entry(for: "themes")?.resolvedRef == "commit-2")
+    }
+}
+
+private final class CheckFetcher: SourceFetching, @unchecked Sendable {
+    var latest: [String: String]
+    private(set) var fetches = 0
+    private(set) var invalidations = 0
+    init(latest: [String: String]) { self.latest = latest }
+    func fetch(_ source: Source) throws -> FetchedSource { fetches += 1; return FetchedSource(root: URL(fileURLWithPath: NSTemporaryDirectory())) }
+    func invalidate(_ source: Source) { invalidations += 1 }
+    func resolveLatest(_ source: Source) throws -> String? { latest[source.name] }
+}
+
+struct UpdateCheckTests {
+    private let fm = FileManager.default
+
+    private func makeConfig(locked: String?) throws -> ConfigDir {
+        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-check-\(UUID().uuidString)")
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        let manifest = """
+        [settings]
+        active_profile = "work"
+
+        [profiles.work]
+        plugins = []
+
+        [[sources]]
+        name = "themes"
+        git = "https://example/themes"
+        """
+        try manifest.write(to: dir.manifestFile, atomically: true, encoding: .utf8)
+        if let locked {
+            var lock = Lockfile()
+            lock.upsert(LockedSource(name: "themes", git: "https://example/themes", resolvedRef: locked, lockedAt: "t"))
+            try lock.write(to: dir.lockFile)
+        }
+        return dir
+    }
+
+    private func report(_ dir: ConfigDir, fetcher: CheckFetcher) throws -> String {
+        var out: [String] = []
+        try UpdateCommand(configDir: dir, check: true, fetcher: fetcher, validator: StubValidator(.valid), reloader: StubReloader())
+            .run { out.append($0) }
+        return out.joined(separator: "\n")
+    }
+
+    @Test func reportsUpToDateWithoutTouchingCacheOrLock() throws {
+        let dir = try makeConfig(locked: "commit-1")
+        let fetcher = CheckFetcher(latest: ["themes": "commit-1"])
+        let out = try report(dir, fetcher: fetcher)
+
+        #expect(out.contains("up-to-date"))
+        #expect(fetcher.fetches == 0)        // never clones
+        #expect(fetcher.invalidations == 0)  // never mutates the cache
+        #expect(Lockfile.load(dir.lockFile).entry(for: "themes")?.resolvedRef == "commit-1")
+    }
+
+    @Test func reportsUpdateAvailableAndLeavesLockUnchanged() throws {
+        let dir = try makeConfig(locked: "commit-1")
+        let out = try report(dir, fetcher: CheckFetcher(latest: ["themes": "commit-2"]))
+
+        #expect(out.contains("update available"))
+        #expect(out.contains("commit-1"))
+        #expect(out.contains("commit-2"))
+        // The whole point of --check: the pin does not move.
+        #expect(Lockfile.load(dir.lockFile).entry(for: "themes")?.resolvedRef == "commit-1")
+    }
+
+    @Test func reportsNotPinnedWhenLockMissing() throws {
+        let dir = try makeConfig(locked: nil)
+        let out = try report(dir, fetcher: CheckFetcher(latest: ["themes": "commit-9"]))
+
+        #expect(out.contains("not pinned"))
+        #expect(fm.fileExists(atPath: dir.lockFile.path) == false)  // check never creates the lock
+    }
+}
+
+private final class ArtifactFetcher: SourceFetching, @unchecked Sendable {
+    let roots: [String: URL]
+    init(_ roots: [String: URL]) { self.roots = roots }
+    func fetch(_ source: Source) throws -> FetchedSource {
+        guard let root = roots[source.name] else {
+            throw SourceError.fetchFailed(source: source.name, detail: "no stub root for \(source.name)")
+        }
+        return FetchedSource(root: root)
+    }
+}
+
+struct ArtifactSyncTests {
+    private let fm = FileManager.default
+
+    private func tempDir() -> URL {
+        let url = fm.temporaryDirectory.appendingPathComponent("kittymgr-art-\(UUID().uuidString)")
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// A config dir with a v2 manifest declaring a theme + plugin from two stub
+    /// sources, returned with the fetcher that serves those sources.
+    private func makeScenario() throws -> (ConfigDir, ArtifactFetcher) {
+        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-artsync-\(UUID().uuidString)")
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+
+        let themeRoot = tempDir()
+        try "background #101010\n".write(to: themeRoot.appendingPathComponent("mytheme.conf"), atomically: true, encoding: .utf8)
+        let pluginRoot = tempDir()
+        try "tab_bar_edge top\n".write(to: pluginRoot.appendingPathComponent("myplugin.conf"), atomically: true, encoding: .utf8)
+
+        let manifest = """
+        [settings]
+        schema_version = 2
+        active_profile = "work"
+        active_theme = "mytheme"
+
+        [profiles.work]
+        plugins = ["myplugin"]
+
+        [[sources]]
+        name = "themesrc"
+        git = "https://example/themes"
+
+        [[sources]]
+        name = "pluginsrc"
+        git = "https://example/plugins"
+
+        [[themes]]
+        name = "mytheme"
+        from = "themesrc"
+
+        [[plugins]]
+        name = "myplugin"
+        from = "pluginsrc"
+        """
+        try manifest.write(to: dir.manifestFile, atomically: true, encoding: .utf8)
+        return (dir, ArtifactFetcher(["themesrc": themeRoot, "pluginsrc": pluginRoot]))
+    }
+
+    private func sync(_ dir: ConfigDir, fetcher: ArtifactFetcher, dryRun: Bool = false, validation: ValidationResult = .valid) -> Synchronizer {
+        Synchronizer(configDir: dir, dryRun: dryRun, fetcher: fetcher, validator: StubValidator(validation), reloader: StubReloader())
+    }
+
+    @Test func syncInstallsDeclaredArtifactsIntoCleanManaged() throws {
+        let (dir, fetcher) = try makeScenario()
+        try sync(dir, fetcher: fetcher).run { _ in }
+
+        #expect(BlockStore(managedDir: dir.managedDir).themeExists("mytheme"))
+        #expect(fm.fileExists(atPath: dir.pluginsDir.appendingPathComponent("myplugin").path))
+        let active = try String(contentsOf: dir.activeConf, encoding: .utf8)
+        #expect(active.contains("include plugins/myplugin/myplugin.conf"))
+        #expect(active.contains("include themes/mytheme.conf"))
+    }
+
+    @Test func artifactInstallIsIdempotent() throws {
+        let (dir, fetcher) = try makeScenario()
+        try sync(dir, fetcher: fetcher).run { _ in }
+        try sync(dir, fetcher: fetcher).run { _ in }  // must not throw "already installed"
+
+        #expect(BlockStore(managedDir: dir.managedDir).themeExists("mytheme"))
+        #expect(fm.fileExists(atPath: dir.pluginsDir.appendingPathComponent("myplugin").path))
+    }
+
+    @Test func dryRunStagesNoArtifactsPermanently() throws {
+        let (dir, fetcher) = try makeScenario()
+        var out: [String] = []
+        try sync(dir, fetcher: fetcher, dryRun: true).run { out.append($0) }
+
+        #expect(out.joined(separator: "\n").contains("[dry-run]"))
+        #expect(BlockStore(managedDir: dir.managedDir).themeExists("mytheme") == false)
+        #expect(fm.fileExists(atPath: dir.pluginsDir.appendingPathComponent("myplugin").path) == false)
+    }
+
+    @Test func invalidSyncRollsBackStagedArtifacts() throws {
+        let (dir, fetcher) = try makeScenario()
+        #expect(throws: SafetyError.self) {
+            try sync(dir, fetcher: fetcher, validation: .invalid(diagnostics: "bad")).run { _ in }
+        }
+        #expect(BlockStore(managedDir: dir.managedDir).themeExists("mytheme") == false)
+        #expect(fm.fileExists(atPath: dir.pluginsDir.appendingPathComponent("myplugin").path) == false)
     }
 }

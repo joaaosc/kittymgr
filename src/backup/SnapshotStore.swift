@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// One tracked file inside a snapshot: its path relative to the kitty config
 /// directory, the SHA-256 of its bytes, and its size.
@@ -109,6 +113,40 @@ public struct SnapshotStore {
         return prefixed.count == 1 ? prefixed.first : nil
     }
 
+    // MARK: Integrity
+
+    /// Snapshot entries whose backing object is missing from the store, as
+    /// `"<snapshotID>:<path>"` — a corruption signal for `doctor`. Empty when the
+    /// store is consistent (a restore would succeed for every published snapshot).
+    public func missingObjects() -> [String] {
+        let fm = FileManager.default
+        var missing: [String] = []
+        for manifest in list() {
+            for entry in manifest.files
+            where !fm.fileExists(atPath: objectsDir.appendingPathComponent(entry.sha256).path) {
+                missing.append("\(manifest.id):\(entry.path)")
+            }
+        }
+        return missing
+    }
+
+    /// Object hashes present in the store but referenced by no snapshot — safe to
+    /// garbage-collect (used by `clean`). Removing them cannot lose history.
+    public func unreferencedObjects() -> [String] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: objectsDir, includingPropertiesForKeys: nil) else { return [] }
+        let referenced = Set(list().flatMap { $0.files.map(\.sha256) })
+        return files.map { $0.lastPathComponent }.filter { !referenced.contains($0) }
+    }
+
+    /// Delete the given object hashes from the store.
+    public func removeObjects(_ hashes: [String]) {
+        let fm = FileManager.default
+        for hash in hashes {
+            try? fm.removeItem(at: objectsDir.appendingPathComponent(hash))
+        }
+    }
+
     // MARK: Restore
 
     /// Restore the managed surface to a byte-for-byte copy of `manifest`: every
@@ -129,31 +167,45 @@ public struct SnapshotStore {
         }
     }
 
-    /// Restore the tracked surface to a previously captured in-memory content map
-    /// (from `currentContents()`). Used to revert a previewed change without
-    /// creating a history entry.
-    public func restore(toContents contents: [String: String]) throws {
+    /// Restore the tracked surface to a previously captured byte-exact map (from
+    /// `currentSurface()`): every file present then is rewritten byte-for-byte and
+    /// any file added since is removed. Binary-safe; used to revert a previewed
+    /// change without creating a history entry.
+    public func restore(toSurface surface: [String: Data]) throws {
         let fm = FileManager.default
-        let wanted = Set(contents.keys)
+        let wanted = Set(surface.keys)
         for file in trackedFiles() where !wanted.contains(relativePath(of: file)) {
             try fm.removeItem(at: file)
         }
-        for (path, text) in contents {
+        for (path, data) in surface {
             let destination = configDir.url.appendingPathComponent(path)
             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try text.write(to: destination, atomically: true, encoding: .utf8)
+            try data.write(to: destination, options: .atomic)
         }
     }
 
     // MARK: State (for diffing)
 
     /// Current text contents of the managed surface keyed by relative path.
+    /// Text-only: undecodable/binary files are skipped, so this is for rendering
+    /// diffs, never for reverting — use `currentSurface()`/`restore(toSurface:)` to
+    /// avoid deleting binary files.
     public func currentContents() -> [String: String] {
         var map: [String: String] = [:]
         for file in trackedFiles() {
             if let text = try? String(contentsOf: file, encoding: .utf8) {
                 map[relativePath(of: file)] = text
             }
+        }
+        return map
+    }
+
+    /// Byte-exact contents of the managed surface keyed by relative path, including
+    /// binary files. The safe capture for reverting a previewed change.
+    public func currentSurface() throws -> [String: Data] {
+        var map: [String: Data] = [:]
+        for file in trackedFiles() {
+            map[relativePath(of: file)] = try Data(contentsOf: file)
         }
         return map
     }

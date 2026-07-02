@@ -38,11 +38,23 @@ public struct Synchronizer {
         let store = SnapshotStore(configDir: configDir)
 
         if dryRun {
-            let before = store.currentContents()
+            // Capture the full byte surface (binary-safe) so the preview reverts
+            // every file exactly — a text-only capture would drop, then delete,
+            // preexisting binary files under managed/.
+            let beforeSurface = try store.currentSurface()
+            let beforeText = beforeSurface.compactMapValues { String(data: $0, encoding: .utf8) }
             let existingDirs = managedDirectories()
-            _ = try applyToDisk(manifest, log: { _ in })
-            let diff = UnifiedDiff.diffStates(old: before, new: store.currentContents())
-            try store.restore(toContents: before)
+            let diff: String
+            do {
+                _ = try applyToDisk(manifest, log: { _ in })
+                diff = UnifiedDiff.diffStates(old: beforeText, new: store.currentContents())
+            } catch {
+                // Even a mid-apply failure must leave the surface untouched.
+                try? store.restore(toSurface: beforeSurface)
+                pruneNewEmptyDirectories(keeping: existingDirs)
+                throw error
+            }
+            try store.restore(toSurface: beforeSurface)
             // `restore` rewrites files but leaves directories the reconcile created;
             // drop any that are now empty so a preview leaves no phantom profile.
             pruneNewEmptyDirectories(keeping: existingDirs)
@@ -51,17 +63,23 @@ public struct Synchronizer {
         }
 
         let snapshot = try store.create(label: "pre-sync")
+        // `restore` rewrites/removes files but leaves directories the reconcile
+        // created; capture the pre-apply dir set so a rollback can prune them and
+        // not leave an empty (falsely "installed") artifact directory behind.
+        let existingDirs = managedDirectories()
         let validationContent: String
         do {
             validationContent = try applyToDisk(manifest, log: log)
         } catch {
             try? store.restore(snapshot)
+            pruneNewEmptyDirectories(keeping: existingDirs)
             throw error
         }
 
         switch validator.validate(content: validationContent) {
         case let .invalid(diagnostics):
             try store.restore(snapshot)
+            pruneNewEmptyDirectories(keeping: existingDirs)
             log("Sync rejected by validation; rolled back to snapshot \(snapshot.id).")
             throw SafetyError.invalidConfiguration(diagnostics)
         case let .skipped(reason):
@@ -82,6 +100,8 @@ public struct Synchronizer {
         let profileStore = ProfileStore(root: configDir.profilesDir)
         let pluginStore = PluginStore(root: configDir.pluginsDir)
         let blockStore = BlockStore(managedDir: configDir.managedDir)
+        // Install declared artifacts first so the reconcile below sees them present.
+        try installArtifacts(manifest, blockStore: blockStore, pluginStore: pluginStore, log: log)
         let installed = Set((try? pluginStore.list())?.map(\.name) ?? [])
 
         for spec in manifest.profiles {
@@ -122,6 +142,51 @@ public struct Synchronizer {
         try ConfigStore.writeAtomically(composed.plan.writes[relative] ?? "", to: configDir.activeConf)
         try ActivePointer(url: configDir.activePointerFile).set(activeName)
         return composed.validationContent
+    }
+
+    /// Install any declared artifact that is missing, staging it onto the managed
+    /// surface. Uses `RemoteInstaller`'s stage-only primitives (no nested
+    /// snapshot/reload) so the reconcile's single `pre-sync` snapshot + validation +
+    /// reload covers the installs too — an invalid result rolls the whole thing back.
+    /// Idempotent; specs with an empty `from` are skipped, unknown sources warn.
+    private func installArtifacts(
+        _ manifest: Manifest,
+        blockStore: BlockStore,
+        pluginStore: PluginStore,
+        log: (String) -> Void
+    ) throws {
+        let installer = RemoteInstaller(configDir: configDir, fetcher: fetcher, validator: validator, reloader: reloader)
+        let kittenStore = KittenStore(root: configDir.kittensDir)
+        let fm = FileManager.default
+
+        func source(for spec: InstallSpec, kind: String) -> Source? {
+            guard !spec.from.isEmpty else { return nil }
+            guard var resolved = manifest.sources.first(where: { $0.name == spec.from })?.source else {
+                log("warning: \(kind) '\(spec.name)' references unknown source '\(spec.from)'; skipping.")
+                return nil
+            }
+            if let ref = spec.ref, case let .git(url, _) = resolved.kind {
+                resolved = Source(name: resolved.name, kind: .git(url: url, ref: ref))
+            }
+            return resolved
+        }
+
+        for spec in manifest.themes where !blockStore.themeExists(spec.name) {
+            guard let src = source(for: spec, kind: "theme") else { continue }
+            try installer.stageTheme(name: spec.name, source: src)
+            log("Installed theme '\(spec.name)' from '\(spec.from)'.")
+        }
+        for spec in manifest.plugins where !fm.fileExists(atPath: configDir.pluginsDir.appendingPathComponent(spec.name).path) {
+            guard let src = source(for: spec, kind: "plugin") else { continue }
+            try installer.stagePlugin(name: spec.name, source: src)
+            log("Installed plugin '\(spec.name)' from '\(spec.from)'.")
+        }
+        for spec in manifest.kittens {
+            if let validated = try? PluginName(validating: spec.name), kittenStore.exists(validated) { continue }
+            guard let src = source(for: spec, kind: "kitten") else { continue }
+            try installer.stageKitten(name: spec.name, source: src)
+            log("Installed kitten '\(spec.name)' from '\(spec.from)'.")
+        }
     }
 
     /// Pin any not-yet-locked source referenced by the manifest.

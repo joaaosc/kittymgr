@@ -8,6 +8,7 @@ enum TOMLLite {
     enum Value: Equatable {
         case string(String)
         case bool(Bool)
+        case int(Int)
         case array([String])
     }
 
@@ -48,6 +49,7 @@ enum TOMLLite {
     static func parseValue(_ raw: String, line: Int) throws -> Value {
         if raw == "true" { return .bool(true) }
         if raw == "false" { return .bool(false) }
+        if let intValue = Int(raw) { return .int(intValue) }
         if raw.hasPrefix("\"") {
             guard raw.hasSuffix("\""), raw.count >= 2 else { throw ParseError(line: line, message: "unterminated string") }
             return .string(String(raw.dropFirst().dropLast()))

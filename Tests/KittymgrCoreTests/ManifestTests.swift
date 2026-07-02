@@ -11,6 +11,7 @@ struct TOMLLiteTests {
         #expect(try TOMLLite.classify("theme = \"gruvbox\"", number: 1) == .pair(key: "theme", value: .string("gruvbox")))
         #expect(try TOMLLite.classify("plugins = [\"a\", \"b\"]", number: 1) == .pair(key: "plugins", value: .array(["a", "b"])))
         #expect(try TOMLLite.classify("on = true", number: 1) == .pair(key: "on", value: .bool(true)))
+        #expect(try TOMLLite.classify("schema_version = 2", number: 1) == .pair(key: "schema_version", value: .int(2)))
     }
 
     @Test func stripsCommentButNotInsideStrings() throws {
@@ -40,6 +41,73 @@ struct ManifestTests {
         )
         let reparsed = try Manifest.parse(original.serialize())
         #expect(reparsed == original)
+    }
+
+    @Test func roundTripsSchemaV2WithArtifactsAndBlocks() throws {
+        let original = Manifest(
+            activeProfile: "work",
+            activeTheme: "gruvbox",
+            keys: ["ctrl-shift-e", "ctrl-shift-t"],
+            snippets: ["scrollback"],
+            profiles: [ProfileSpec(name: "work", plugins: ["tabs"])],
+            sources: [SourceSpec(name: "themes", git: "https://example/themes")],
+            themes: [InstallSpec(name: "gruvbox", from: "themes")],
+            plugins: [InstallSpec(name: "tabs", from: "myplugins", ref: "v1")],
+            kittens: [InstallSpec(name: "hints")]
+        )
+        let reparsed = try Manifest.parse(original.serialize())
+        #expect(reparsed == original)
+        #expect(reparsed.schemaVersion == Manifest.currentSchemaVersion)
+    }
+
+    @Test func migratesV1ManifestToV2WithoutDataLoss() throws {
+        let v1 = """
+        [settings]
+        active_profile = "work"
+        active_theme = "gruvbox"
+
+        [profiles.work]
+        plugins = ["tabs"]
+        """
+        let parsed = try Manifest.parse(v1)
+        #expect(parsed.schemaVersion == 1)  // detected as pre-v2
+        #expect(parsed.activeProfile == "work")
+        #expect(parsed.profiles.first?.plugins == ["tabs"])
+        #expect(parsed.themes.isEmpty)
+
+        // Serializing migrates to v2 without losing the v1 data.
+        let migrated = try Manifest.parse(parsed.serialize())
+        #expect(migrated.schemaVersion == Manifest.currentSchemaVersion)
+        #expect(migrated.activeProfile == "work")
+        #expect(migrated.profiles.first?.plugins == ["tabs"])
+    }
+
+    @Test func parsesInstallTablesAndSlugBlocks() throws {
+        let toml = """
+        [settings]
+        schema_version = 2
+        active_profile = "work"
+        keys = ["ctrl-shift-e"]
+        snippets = ["scrollback"]
+
+        [profiles.work]
+        plugins = []
+
+        [[themes]]
+        name = "gruvbox"
+        from = "kitty-themes"
+
+        [[kittens]]
+        name = "hints"
+        from = "mykittens"
+        ref = "main"
+        """
+        let manifest = try Manifest.parse(toml)
+        #expect(manifest.schemaVersion == 2)
+        #expect(manifest.keys == ["ctrl-shift-e"])
+        #expect(manifest.snippets == ["scrollback"])
+        #expect(manifest.themes == [InstallSpec(name: "gruvbox", from: "kitty-themes")])
+        #expect(manifest.kittens == [InstallSpec(name: "hints", from: "mykittens", ref: "main")])
     }
 
     @Test func parseRejectsUnknownTable() {

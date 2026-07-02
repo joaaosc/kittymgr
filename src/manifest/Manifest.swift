@@ -35,56 +35,122 @@ public struct SourceSpec: Equatable, Sendable {
     }
 }
 
-/// The declarative description of a kittymgr configuration: the active selection,
-/// each profile's enabled plugins, and the remote sources. Serialized as the
-/// user-facing `kittymgr.toml` (TOML-like v1).
+/// An artifact (theme, plugin, or kitten) installed from a named source: the
+/// artifact `name`, the `from` source it comes from (a `[[sources]]` name), and an
+/// optional `ref` override. `from == ""` means the origin is unknown — the artifact
+/// is on disk but `sync` cannot reinstall it until a source is supplied.
+public struct InstallSpec: Equatable, Sendable {
+    public var name: String
+    public var from: String
+    public var ref: String?
+
+    public init(name: String, from: String = "", ref: String? = nil) {
+        self.name = name
+        self.from = from
+        self.ref = ref
+    }
+}
+
+/// The declarative description of a kittymgr configuration, serialized as the
+/// user-facing `kittymgr.toml`.
 ///
-/// Scope of v1: the reproducible *state* — `active_profile`, `active_theme`, and
-/// per-profile enabled `plugins` — plus named `sources`. Block content
-/// (keys/snippets) stays imperative for now (see README).
+/// Schema v2 (an *extension* of v1) covers: the active selection
+/// (`active_profile`, `active_theme`), each profile's enabled `plugins`, additive
+/// `keys`/`snippets` (by slug — their content lives in `managed/keys|snippets/*.conf`,
+/// versionable as dotfiles), named `[[sources]]`, and the installed artifacts
+/// `[[themes]]`/`[[plugins]]`/`[[kittens]]` with their `from` source. A v1 manifest
+/// (no `schema_version`, no artifact tables) still parses and is migrated to v2 on
+/// the next write.
 public struct Manifest: Equatable, Sendable {
+    /// The schema version this build writes.
+    public static let currentSchemaVersion = 2
+
+    /// Schema version read from disk (1 when absent — a pre-v2 manifest).
+    public var schemaVersion: Int
     public var activeProfile: String?
     public var activeTheme: String?
+    public var keys: [String]
+    public var snippets: [String]
     public var profiles: [ProfileSpec]
     public var sources: [SourceSpec]
+    public var themes: [InstallSpec]
+    public var plugins: [InstallSpec]
+    public var kittens: [InstallSpec]
 
     public init(
+        schemaVersion: Int = Manifest.currentSchemaVersion,
         activeProfile: String? = nil,
         activeTheme: String? = nil,
+        keys: [String] = [],
+        snippets: [String] = [],
         profiles: [ProfileSpec] = [],
-        sources: [SourceSpec] = []
+        sources: [SourceSpec] = [],
+        themes: [InstallSpec] = [],
+        plugins: [InstallSpec] = [],
+        kittens: [InstallSpec] = []
     ) {
+        self.schemaVersion = schemaVersion
         self.activeProfile = activeProfile
         self.activeTheme = activeTheme
+        self.keys = keys
+        self.snippets = snippets
         self.profiles = profiles
         self.sources = sources
+        self.themes = themes
+        self.plugins = plugins
+        self.kittens = kittens
     }
 
     // MARK: Bootstrap
 
     /// Build a manifest from the current on-disk state (for `manifest init`).
-    public static func fromDisk(_ configDir: ConfigDir) throws -> Manifest {
+    ///
+    /// Installed themes/plugins/kittens are listed with an empty `from` because
+    /// their origin is not recorded on disk; `log` receives a note asking the user
+    /// to fill each `from` so `sync` can reinstall them. `keys`/`snippets` are
+    /// captured by slug (their content stays in `managed/keys|snippets/*.conf`).
+    public static func fromDisk(_ configDir: ConfigDir, log: (String) -> Void = { _ in }) throws -> Manifest {
         let profileStore = ProfileStore(root: configDir.profilesDir)
+        let blockStore = BlockStore(managedDir: configDir.managedDir)
+        let pluginStore = PluginStore(root: configDir.pluginsDir)
+        let kittenStore = KittenStore(root: configDir.kittensDir)
+        let block = blockStore.state()
+
         let profiles = try profileStore.list().map { name -> ProfileSpec in
             let validated = try ProfileName(validating: name)
             return ProfileSpec(name: name, plugins: profileStore.metadata(for: validated).enabledPlugins)
         }
+        let themes = blockStore.availableThemes().map { InstallSpec(name: $0) }
+        let plugins = ((try? pluginStore.list()) ?? []).map { InstallSpec(name: $0.name) }
+        let kittens = kittenStore.list().map { InstallSpec(name: $0.name) }
+
+        if !themes.isEmpty || !plugins.isEmpty || !kittens.isEmpty {
+            log("note: installed themes/plugins/kittens were written with an empty `from`; set each `from` to a `[[sources]]` name so `sync` can reinstall them.")
+        }
+
         return Manifest(
             activeProfile: ActivePointer(url: configDir.activePointerFile).get(),
-            activeTheme: BlockStore(managedDir: configDir.managedDir).state().activeTheme,
+            activeTheme: block.activeTheme,
+            keys: block.keys,
+            snippets: block.snippets,
             profiles: profiles,
-            sources: []
+            sources: [],
+            themes: themes,
+            plugins: plugins,
+            kittens: kittens
         )
     }
 
     // MARK: Parsing
 
     private enum ParseContext {
-        case none, settings, profile(Int), source(Int)
+        case none, settings, profile(Int), source(Int), theme(Int), plugin(Int), kitten(Int)
     }
 
     public static func parse(_ text: String) throws -> Manifest {
         var manifest = Manifest()
+        // Absent `schema_version` means a pre-v2 manifest; an explicit value overrides.
+        manifest.schemaVersion = 1
         var context = ParseContext.none
 
         for (index, raw) in text.components(separatedBy: "\n").enumerated() {
@@ -103,11 +169,22 @@ public struct Manifest: Equatable, Sendable {
                     throw TOMLLite.ParseError(line: number, message: "unknown table [\(name)]")
                 }
             case let .arrayTable(name):
-                guard name == "sources" else {
+                switch name {
+                case "sources":
+                    manifest.sources.append(SourceSpec(name: ""))
+                    context = .source(manifest.sources.count - 1)
+                case "themes":
+                    manifest.themes.append(InstallSpec(name: ""))
+                    context = .theme(manifest.themes.count - 1)
+                case "plugins":
+                    manifest.plugins.append(InstallSpec(name: ""))
+                    context = .plugin(manifest.plugins.count - 1)
+                case "kittens":
+                    manifest.kittens.append(InstallSpec(name: ""))
+                    context = .kitten(manifest.kittens.count - 1)
+                default:
                     throw TOMLLite.ParseError(line: number, message: "unknown array-of-tables [[\(name)]]")
                 }
-                manifest.sources.append(SourceSpec(name: ""))
-                context = .source(manifest.sources.count - 1)
             case let .pair(key, value):
                 try assign(key: key, value: value, context: context, into: &manifest, line: number)
             }
@@ -130,12 +207,19 @@ public struct Manifest: Equatable, Sendable {
             guard case let .array(a) = value else { throw TOMLLite.ParseError(line: line, message: "'\(key)' expects an array") }
             return a
         }
+        func int() throws -> Int {
+            guard case let .int(i) = value else { throw TOMLLite.ParseError(line: line, message: "'\(key)' expects an integer") }
+            return i
+        }
 
         switch context {
         case .settings:
             switch key {
+            case "schema_version": manifest.schemaVersion = try int()
             case "active_profile": manifest.activeProfile = try str()
             case "active_theme": manifest.activeTheme = try str()
+            case "keys": manifest.keys = try arr()
+            case "snippets": manifest.snippets = try arr()
             default: throw TOMLLite.ParseError(line: line, message: "unknown setting '\(key)'")
             }
         case let .profile(i):
@@ -152,22 +236,38 @@ public struct Manifest: Equatable, Sendable {
             case "ref": manifest.sources[i].ref = try str()
             default: throw TOMLLite.ParseError(line: line, message: "unknown source key '\(key)'")
             }
+        case let .theme(i):
+            try assignInstall(&manifest.themes[i], key: key, string: try str(), line: line)
+        case let .plugin(i):
+            try assignInstall(&manifest.plugins[i], key: key, string: try str(), line: line)
+        case let .kitten(i):
+            try assignInstall(&manifest.kittens[i], key: key, string: try str(), line: line)
         case .none:
             throw TOMLLite.ParseError(line: line, message: "'\(key)' outside any table")
+        }
+    }
+
+    private static func assignInstall(_ spec: inout InstallSpec, key: String, string: String, line: Int) throws {
+        switch key {
+        case "name": spec.name = string
+        case "from": spec.from = string
+        case "ref": spec.ref = string
+        default: throw TOMLLite.ParseError(line: line, message: "unknown install key '\(key)'")
         }
     }
 
     // MARK: Serializing
 
     public func serialize() -> String {
-        var lines = ["# kittymgr manifest (TOML-like v1). Managed declaratively; edit and run `kittymgr sync`."]
+        var lines = ["# kittymgr manifest (TOML-like v\(Manifest.currentSchemaVersion)). Managed declaratively; edit and run `kittymgr sync`."]
 
-        if activeProfile != nil || activeTheme != nil {
-            lines.append("")
-            lines.append("[settings]")
-            if let activeProfile { lines.append("active_profile = \(TOMLLite.string(activeProfile))") }
-            if let activeTheme { lines.append("active_theme = \(TOMLLite.string(activeTheme))") }
-        }
+        lines.append("")
+        lines.append("[settings]")
+        lines.append("schema_version = \(Manifest.currentSchemaVersion)")
+        if let activeProfile { lines.append("active_profile = \(TOMLLite.string(activeProfile))") }
+        if let activeTheme { lines.append("active_theme = \(TOMLLite.string(activeTheme))") }
+        if !keys.isEmpty { lines.append("keys = \(TOMLLite.array(keys))") }
+        if !snippets.isEmpty { lines.append("snippets = \(TOMLLite.array(snippets))") }
 
         for profile in profiles {
             lines.append("")
@@ -185,7 +285,21 @@ public struct Manifest: Equatable, Sendable {
             if let ref = source.ref { lines.append("ref = \(TOMLLite.string(ref))") }
         }
 
+        appendInstalls(&lines, table: "themes", specs: themes)
+        appendInstalls(&lines, table: "plugins", specs: plugins)
+        appendInstalls(&lines, table: "kittens", specs: kittens)
+
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func appendInstalls(_ lines: inout [String], table: String, specs: [InstallSpec]) {
+        for spec in specs {
+            lines.append("")
+            lines.append("[[\(table)]]")
+            lines.append("name = \(TOMLLite.string(spec.name))")
+            lines.append("from = \(TOMLLite.string(spec.from))")
+            if let ref = spec.ref { lines.append("ref = \(TOMLLite.string(ref))") }
+        }
     }
 
     // MARK: Disk

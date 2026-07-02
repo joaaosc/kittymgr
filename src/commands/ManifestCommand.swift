@@ -61,7 +61,7 @@ public struct ManifestCommand {
     private func initialize(force: Bool, log: (String) -> Void) throws {
         let exists = FileManager.default.fileExists(atPath: configDir.manifestFile.path)
         guard !exists || force else { throw ManifestError.alreadyExists }
-        let manifest = try Manifest.fromDisk(configDir)
+        let manifest = try Manifest.fromDisk(configDir, log: log)
         if dryRun {
             log("[dry-run] Would write \(configDir.manifestFile.lastPathComponent):\n" + manifest.serialize())
             return

@@ -119,14 +119,64 @@ public struct RemoteInstaller {
         }
 
         try SnapshotStore(configDir: configDir).create(label: "plugin-install-\(validated.value)")
+        try stagePluginFiles(validated, confs: confs, into: destination)
+        log("Installed plugin '\(validated.value)'. Enable it with: kittymgr plugin enable \(validated.value)")
+    }
+
+    // MARK: Staging (no snapshot, validation, or reload)
+
+    /// The primitives `sync` uses: they only stage files onto the managed surface,
+    /// leaving one snapshot / validation / reload to the caller (the reconcile).
+    /// Each is idempotent — a no-op when the artifact is already present.
+
+    /// Write a theme's `.conf` under `managed/themes/<name>.conf`.
+    public func stageTheme(name: String, source: Source) throws {
+        let blockStore = BlockStore(managedDir: configDir.managedDir)
+        guard !blockStore.themeExists(name) else { return }
+        let fetched = try fetcher.fetch(source)
+        guard let themeFile = resolveThemeFile(name: name, source: source, fetched: fetched) else {
+            throw SourceError.fetchFailed(source: name, detail: "theme not found in source")
+        }
+        let content = try String(contentsOf: themeFile, encoding: .utf8)
+        try FileManager.default.createDirectory(at: blockStore.themesDir, withIntermediateDirectories: true)
+        try content.write(to: blockStore.themesDir.appendingPathComponent("\(name).conf"), atomically: true, encoding: .utf8)
+    }
+
+    /// Stage a fetched plugin bundle under `managed/plugins/<name>/`.
+    public func stagePlugin(name: String, source: Source) throws {
+        let validated = try PluginName(validating: name)
+        let fm = FileManager.default
+        let destination = configDir.pluginsDir.appendingPathComponent(validated.value)
+        guard !fm.fileExists(atPath: destination.path) else { return }
+
+        let fetched = try fetcher.fetch(source)
+        let confs = (try? fm.contentsOfDirectory(at: fetched.root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))?
+            .filter { $0.pathExtension == "conf" } ?? []
+        guard !confs.isEmpty else {
+            throw SourceError.fetchFailed(source: name, detail: "no .conf files in source")
+        }
+        try stagePluginFiles(validated, confs: confs, into: destination)
+    }
+
+    /// Copy a fetched kitten under `managed/kittens/<name>/` (never executed).
+    public func stageKitten(name: String, source: Source) throws {
+        let validated = try PluginName(validating: name)
+        let store = KittenStore(root: configDir.kittensDir)
+        guard !store.exists(validated) else { return }
+        let fetched = try fetcher.fetch(source)
+        try store.install(validated, from: fetched.root)
+    }
+
+    /// Atomically publish `confs` as `destination` via a staging directory + rename.
+    private func stagePluginFiles(_ name: PluginName, confs: [URL], into destination: URL) throws {
+        let fm = FileManager.default
         try fm.createDirectory(at: configDir.pluginsDir, withIntermediateDirectories: true)
-        let staging = configDir.pluginsDir.appendingPathComponent(".\(validated.value).tmp.\(UUID().uuidString)")
+        let staging = configDir.pluginsDir.appendingPathComponent(".\(name.value).tmp.\(UUID().uuidString)")
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
         for conf in confs {
             try fm.copyItem(at: conf, to: staging.appendingPathComponent(conf.lastPathComponent))
         }
         try fm.moveItem(at: staging, to: destination)
-        log("Installed plugin '\(validated.value)'. Enable it with: kittymgr plugin enable \(validated.value)")
     }
 }

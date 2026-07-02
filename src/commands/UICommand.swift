@@ -9,15 +9,12 @@ public struct UICommand {
     }
 
     public func run() throws {
-        let picker = Picker(
+        let engine = TUIEngine(
             profileStore: ProfileStore(root: configDir.profilesDir),
             pluginStore: PluginStore(root: configDir.pluginsDir),
             activePointer: ActivePointer(url: configDir.activePointerFile),
             activeConf: configDir.activeConf
         )
-        try picker.run(
-            read: { readLine(strippingNewline: true) },
-            write: { print($0) }
-        )
+        try engine.start()
     }
 }

@@ -11,6 +11,13 @@ public enum KittymgrCLI {
         let dryRun = args.contains("--dry-run")
         args.removeAll { $0 == "--dry-run" }
 
+        // `--version`/`-V` anywhere reports the release and exits before any
+        // command dispatch or filesystem access.
+        if args.contains("--version") || args.contains("-V") {
+            print("kittymgr \(Kittymgr.version)")
+            return 0
+        }
+
         // `--help`/`-h` anywhere documents the full command surface, so both
         // `kittymgr --help` and `kittymgr <cmd> --help` are answered.
         if args.contains("--help") || args.contains("-h") {
@@ -92,6 +99,9 @@ public enum KittymgrCLI {
                     rawName: name
                 ).run()
                 return passed ? 0 : 1
+            case "doctor":
+                let ok = DoctorCommand(configDir: ConfigDir.resolve()).run()
+                return ok ? 0 : 1
             case "current":
                 let dir = ConfigDir.resolve()
                 try CurrentCommand(activePointer: ActivePointer(url: dir.activePointerFile)).run()
@@ -117,7 +127,15 @@ public enum KittymgrCLI {
                 return 0
             case "update":
                 let target = options.first { !$0.hasPrefix("-") }
-                try UpdateCommand(configDir: ConfigDir.resolve(), target: target, dryRun: dryRun).run()
+                try UpdateCommand(configDir: ConfigDir.resolve(), target: target, dryRun: dryRun, check: options.contains("--check")).run()
+                return 0
+            case "clean":
+                try CleanCommand(
+                    configDir: ConfigDir.resolve(),
+                    artifacts: options.contains("--artifacts"),
+                    force: options.contains("--force") || options.contains("-f"),
+                    dryRun: dryRun
+                ).run()
                 return 0
             case "backup":
                 return runBackup(options, dryRun: dryRun)
@@ -525,6 +543,7 @@ public enum KittymgrCLI {
           kittymgr profile <list|create|switch|delete|current> ...
                                         Same operations grouped under one verb.
           kittymgr check <name>         Report conflicts and validation without switching.
+          kittymgr doctor               Report environment & managed-store health.
           kittymgr plugin list          List plugins and their enabled state.
           kittymgr plugin enable <name> [--profile <name>]
           kittymgr plugin disable <name> [--profile <name>]
@@ -540,12 +559,14 @@ public enum KittymgrCLI {
           kittymgr manifest <init|show>             Author/inspect the declarative kittymgr.toml.
           kittymgr source <list|add|remove> ...     Manage named remote sources in the manifest.
           kittymgr sync                             Reconcile disk to kittymgr.toml (snapshot; rollback on failure).
-          kittymgr update [<source>]                Re-resolve sources, re-pin the lock, and sync.
+          kittymgr update [<source>] [--check]      Re-resolve sources & sync; --check only reports what is outdated.
+          kittymgr clean [--artifacts] [--force]    Remove orphan caches/backups; --artifacts --force also prunes unused themes/plugins/kittens.
           kittymgr backup create [--label <text>]   Snapshot the managed surface.
           kittymgr backup list          List snapshots (id, timestamp, label).
           kittymgr backup restore <id>  Restore a snapshot byte-for-byte.
           kittymgr ui                   Launch the interactive picker (alias: pick).
           kittymgr help                 Show this message.
+          kittymgr --version            Print the version (alias: -V).
 
         Global flags:
           --dry-run                     Preview a change as a unified diff; write nothing.

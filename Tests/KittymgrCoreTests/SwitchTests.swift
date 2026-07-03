@@ -36,7 +36,7 @@ struct ActivePointerTests {
     private func makePointer() -> ActivePointer {
         let url = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-active-\(UUID().uuidString)")
-            .appendingPathComponent("managed/.kittymgr-active")
+            .appendingPathComponent("kittymgr/.kittymgr-active")
         return ActivePointer(url: url)
     }
 
@@ -71,7 +71,7 @@ struct SwitchCommandTests {
     private func makeFixture() throws -> Fixture {
         let managed = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-switch-\(UUID().uuidString)")
-            .appendingPathComponent("managed")
+            .appendingPathComponent("kittymgr")
         return Fixture(
             profileStore: ProfileStore(root: managed.appendingPathComponent("profiles")),
             pluginStore: PluginStore(root: managed.appendingPathComponent("plugins")),
@@ -187,7 +187,7 @@ struct CurrentCommandTests {
     private func makePointer() -> ActivePointer {
         let url = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-current-\(UUID().uuidString)")
-            .appendingPathComponent("managed/.kittymgr-active")
+            .appendingPathComponent("kittymgr/.kittymgr-active")
         return ActivePointer(url: url)
     }
 

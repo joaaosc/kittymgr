@@ -1,6 +1,6 @@
 import Foundation
 
-/// A plugin bundled with kittymgr, seeded into `managed/plugins/` so the plugin
+/// A plugin bundled with kittymgr, seeded into `kittymgr/plugins/` so the plugin
 /// workflow is usable out of the box.
 struct SamplePlugin {
     let name: String

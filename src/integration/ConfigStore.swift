@@ -48,9 +48,10 @@ enum ConfigStore {
 
     /// Copy `url` to `<name>.bak.<timestamp>` (with a counter on collision).
     @discardableResult
-    static func makeBackup(of url: URL, now: Date = Date()) throws -> URL {
+    static func makeBackup(of url: URL, in destinationDirectory: URL? = nil, now: Date = Date()) throws -> URL {
         let fm = FileManager.default
-        let dir = url.deletingLastPathComponent()
+        let dir = destinationDirectory ?? url.deletingLastPathComponent()
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let prefix = url.lastPathComponent + ".bak."
         let stamp = timestamp(now)
         var candidate = dir.appendingPathComponent(prefix + stamp)

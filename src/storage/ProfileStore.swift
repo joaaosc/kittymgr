@@ -1,7 +1,7 @@
 import Foundation
 
 /// Safely enumerates, creates, and deletes profile directories under a fixed root
-/// (`managed/profiles/`). All mutating operations are confined to that root.
+/// (`kittymgr/profiles/`). All mutating operations are confined to that root.
 public struct ProfileStore {
     public let root: URL
     private let fileManager: FileManager

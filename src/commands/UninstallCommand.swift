@@ -40,7 +40,7 @@ public struct UninstallCommand {
 
         if removeManaged {
             try? fm.removeItem(at: configDir.managedDir)
-            log("Removed managed directory.")
+            log("Removed kittymgr directory.")
         }
         return true
     }

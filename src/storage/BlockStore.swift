@@ -16,11 +16,11 @@ public struct BlockState: Equatable, Sendable {
 
 /// Enumerates the modular blocks that layer on top of any profile:
 ///
-/// - `managed/themes/<name>.conf` — installed themes; one is active at a time,
-///   recorded in `managed/.kittymgr-theme`.
-/// - `managed/keys/<slug>.conf` — keybinding includes (additive: all present are
+/// - `kittymgr/themes/<name>.conf` — installed themes; one is active at a time,
+///   recorded in `kittymgr/.kittymgr-theme`.
+/// - `kittymgr/keys/<slug>.conf` — keybinding includes (additive: all present are
 ///   active).
-/// - `managed/snippets/<slug>.conf` — snippet includes (additive).
+/// - `kittymgr/snippets/<slug>.conf` — snippet includes (additive).
 ///
 /// Read-only over the filesystem; mutations are expressed as `ApplyPlan` writes and
 /// deletes so they flow through the transactional apply path.

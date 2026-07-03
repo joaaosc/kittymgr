@@ -1,6 +1,6 @@
 import Foundation
 
-/// Enumerates available plugins under `managed/plugins/` and reads their snippets
+/// Enumerates available plugins under `kittymgr/plugins/` and reads their snippets
 /// and optional metadata. Read-only: plugins are authored on disk or seeded as
 /// samples; this store never mutates them.
 public struct PluginStore {

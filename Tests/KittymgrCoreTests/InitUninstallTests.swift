@@ -44,11 +44,16 @@ struct InitUninstallTests {
 
         _ = try InitCommand(configDir: dir).run(log: silent)
         let afterFirst = try read(dir.kittyConf)
+        let backupsAfterFirst = try fm.contentsOfDirectory(atPath: dir.confBackupsDir.path)
+            .filter { $0.hasPrefix("kitty.conf.bak.") }
         let secondChanged = try InitCommand(configDir: dir).run(log: silent)
         let afterSecond = try read(dir.kittyConf)
+        let backupsAfterSecond = try fm.contentsOfDirectory(atPath: dir.confBackupsDir.path)
+            .filter { $0.hasPrefix("kitty.conf.bak.") }
 
         #expect(secondChanged == false)
         #expect(afterFirst == afterSecond)
+        #expect(backupsAfterSecond == backupsAfterFirst)
     }
 
     @Test func initCreatesTimestampedBackup() throws {
@@ -57,7 +62,7 @@ struct InitUninstallTests {
 
         _ = try InitCommand(configDir: dir).run(log: silent)
 
-        let backups = try fm.contentsOfDirectory(atPath: dir.url.path)
+        let backups = try fm.contentsOfDirectory(atPath: dir.confBackupsDir.path)
             .filter { $0.hasPrefix("kitty.conf.bak.") }
         #expect(backups.count == 1)
     }

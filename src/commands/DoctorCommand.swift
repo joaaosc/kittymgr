@@ -108,13 +108,36 @@ public struct DoctorCommand {
 
     private func managedLayerFindings() -> [DoctorFinding] {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: configDir.managedDir.path) else {
-            return [DoctorFinding(.warn, "managed layer", "not initialized; run `kittymgr init`")]
+        let layout = configDir.detectedLayout(fileManager: fm)
+        switch layout {
+        case .absent:
+            return [DoctorFinding(.warn, "layout", "not initialized; run `kittymgr init`")]
+        case .legacy:
+            return [
+                DoctorFinding(
+                    .warn,
+                    "layout",
+                    "legacy layout at managed/; run `kittymgr init` to migrate to kittymgr/"
+                ),
+            ]
+        case .mixed(let detail):
+            return [
+                DoctorFinding(
+                    .fail,
+                    "layout",
+                    "mixed layout detected (\(detail)); repair manually, then run `kittymgr init`"
+                ),
+            ]
+        case .current:
+            break
         }
-        var out = [DoctorFinding(.ok, "managed layer", "present at \(configDir.relativePath(of: configDir.managedDir))")]
+        var out = [
+            DoctorFinding(.ok, "layout", "new layout at \(configDir.relativePath(of: configDir.managedDir))/"),
+            DoctorFinding(.ok, "managed layer", "present at \(configDir.relativePath(of: configDir.managedDir))"),
+        ]
 
         if let content = try? String(contentsOf: configDir.kittyConf, encoding: .utf8) {
-            out.append(Guard.contains(in: content)
+            out.append(Guard.containsCurrentInclude(in: content)
                 ? DoctorFinding(.ok, "kitty.conf block", "managed include block present")
                 : DoctorFinding(.warn, "kitty.conf block", "managed block missing from kitty.conf; run `kittymgr init`"))
         } else {

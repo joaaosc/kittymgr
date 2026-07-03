@@ -45,14 +45,40 @@ struct DoctorCommandTests {
         #expect(out.contains { $0.contains("[WARN] remote control") })
     }
 
-    @Test func missingManagedLayerWarns() throws {
+    @Test func missingLayoutWarns() throws {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-doctor-\(UUID().uuidString)")
         let dir = ConfigDir(url: root)  // nothing initialized
         var out: [String] = []
         let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
 
         #expect(ok)
-        #expect(out.contains { $0.contains("[WARN] managed layer") })
+        #expect(out.contains { $0.contains("[WARN] layout") })
+    }
+
+    @Test func legacyLayoutReportsMigrationPath() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-doctor-\(UUID().uuidString)")
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.legacyManagedDir, withIntermediateDirectories: true)
+
+        var out: [String] = []
+        let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
+
+        #expect(ok)
+        #expect(out.contains { $0.contains("[WARN] layout") && $0.contains("run `kittymgr init`") })
+        #expect(out.contains { $0.contains("managed/") && $0.contains("kittymgr/") })
+    }
+
+    @Test func mixedLayoutReportsFailure() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-doctor-\(UUID().uuidString)")
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.legacyManagedDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+
+        var out: [String] = []
+        let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
+
+        #expect(ok == false)
+        #expect(out.contains { $0.contains("[FAIL] layout") && $0.contains("repair manually") })
     }
 
     @Test func corruptBackupObjectFails() throws {

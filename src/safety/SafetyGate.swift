@@ -16,7 +16,7 @@ public enum SafetyGate {
         pluginStore: PluginStore,
         validator: any ConfigValidating
     ) throws -> SafetyReport {
-        // `profileStore.root` is `<configDir>/managed/profiles`; recover the config
+        // `profileStore.root` is `<configDir>/kittymgr/profiles`; recover the config
         // root so composition can see the active modular blocks.
         let configDir = ConfigDir(url: profileStore.root.deletingLastPathComponent().deletingLastPathComponent())
         let composed = try ProfileComposer.compose(

@@ -39,6 +39,7 @@ public struct Lockfile: Codable, Equatable, Sendable {
     public func write(to url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 

@@ -137,8 +137,8 @@ struct ManifestTests {
 
     @Test func initWritesThenSourceAddUpdates() throws {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-manifestcmd-\(UUID().uuidString)")
-        try fm.createDirectory(at: root.appendingPathComponent("managed"), withIntermediateDirectories: true)
         let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
         _ = try ProfileStore(root: dir.profilesDir).create(try ProfileName(validating: "work"))
 
         try ManifestCommand(action: .initialize(force: false), configDir: dir).run(log: { _ in })

@@ -35,7 +35,7 @@ public struct Picker {
         self.reloader = reloader
     }
 
-    /// `active.conf` is canonically `<configDir>/managed/active.conf`; recover the
+    /// `active.conf` is canonically `<configDir>/kittymgr/active.conf`; recover the
     /// config root for the subsystems that key off it (blocks, backups, kittens).
     private var configDir: ConfigDir {
         ConfigDir(url: activeConf.deletingLastPathComponent().deletingLastPathComponent())

@@ -32,6 +32,11 @@ enum BlockComposer {
         var writes: [String: String] = [:]
         var deletes: [String] = []
         var overlay: [String: String] = [:]  // managed-relative path -> pending content
+        let configPrefix = blockStore.managedDir.lastPathComponent + "/"
+
+        func configPath(_ managedRelative: String) -> String {
+            configPrefix + managedRelative
+        }
 
         let pointerPath = configPath(".kittymgr-theme")
 
@@ -93,10 +98,5 @@ enum BlockComposer {
         for key in state.keys.sorted() { add("keys/\(key).conf") }
 
         return BlockContribution(writes: writes, deletes: deletes, includes: includes, layers: layers)
-    }
-
-    /// Map a managed-relative path to a config-directory-relative path.
-    private static func configPath(_ managedRelative: String) -> String {
-        "managed/" + managedRelative
     }
 }

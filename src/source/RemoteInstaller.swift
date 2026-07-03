@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Themes route through `BlockCommand` (composed + validated via the apply
 /// pipeline); kittens through `KittenStore` (snapshot-audited, never executed);
-/// plugin bundles are staged atomically under `managed/plugins/<name>/`.
+/// plugin bundles are staged atomically under `kittymgr/plugins/<name>/`.
 public struct RemoteInstaller {
     public let configDir: ConfigDir
     public let fetcher: any SourceFetching
@@ -97,7 +97,7 @@ public struct RemoteInstaller {
     // MARK: Plugins
 
     /// Stage a fetched plugin bundle (its `.conf` files) atomically under
-    /// `managed/plugins/<name>/`.
+    /// `kittymgr/plugins/<name>/`.
     public func installPlugin(name: String, source: Source, log: (String) -> Void = { print($0) }) throws {
         let validated = try PluginName(validating: name)
         let fm = FileManager.default
@@ -129,7 +129,7 @@ public struct RemoteInstaller {
     /// leaving one snapshot / validation / reload to the caller (the reconcile).
     /// Each is idempotent — a no-op when the artifact is already present.
 
-    /// Write a theme's `.conf` under `managed/themes/<name>.conf`.
+    /// Write a theme's `.conf` under `kittymgr/themes/<name>.conf`.
     public func stageTheme(name: String, source: Source) throws {
         let blockStore = BlockStore(managedDir: configDir.managedDir)
         guard !blockStore.themeExists(name) else { return }
@@ -142,7 +142,7 @@ public struct RemoteInstaller {
         try content.write(to: blockStore.themesDir.appendingPathComponent("\(name).conf"), atomically: true, encoding: .utf8)
     }
 
-    /// Stage a fetched plugin bundle under `managed/plugins/<name>/`.
+    /// Stage a fetched plugin bundle under `kittymgr/plugins/<name>/`.
     public func stagePlugin(name: String, source: Source) throws {
         let validated = try PluginName(validating: name)
         let fm = FileManager.default
@@ -158,7 +158,7 @@ public struct RemoteInstaller {
         try stagePluginFiles(validated, confs: confs, into: destination)
     }
 
-    /// Copy a fetched kitten under `managed/kittens/<name>/` (never executed).
+    /// Copy a fetched kitten under `kittymgr/kittens/<name>/` (never executed).
     public func stageKitten(name: String, source: Source) throws {
         let validated = try PluginName(validating: name)
         let store = KittenStore(root: configDir.kittensDir)

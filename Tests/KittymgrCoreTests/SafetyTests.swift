@@ -59,7 +59,7 @@ struct CheckCommandTests {
     private func makeFixture() -> Fixture {
         let managed = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-check-\(UUID().uuidString)")
-            .appendingPathComponent("managed")
+            .appendingPathComponent("kittymgr")
         return Fixture(
             profileStore: ProfileStore(root: managed.appendingPathComponent("profiles")),
             pluginStore: PluginStore(root: managed.appendingPathComponent("plugins"))
@@ -129,7 +129,7 @@ struct SwitchGateTests {
     private func makeFixture() -> Fixture {
         let managed = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-gate-\(UUID().uuidString)")
-            .appendingPathComponent("managed")
+            .appendingPathComponent("kittymgr")
         return Fixture(
             profileStore: ProfileStore(root: managed.appendingPathComponent("profiles")),
             pluginStore: PluginStore(root: managed.appendingPathComponent("plugins")),

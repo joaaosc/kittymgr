@@ -56,7 +56,7 @@ public struct InstallSpec: Equatable, Sendable {
 ///
 /// Schema v2 (an *extension* of v1) covers: the active selection
 /// (`active_profile`, `active_theme`), each profile's enabled `plugins`, additive
-/// `keys`/`snippets` (by slug — their content lives in `managed/keys|snippets/*.conf`,
+/// `keys`/`snippets` (by slug — their content lives in `kittymgr/keys|snippets/*.conf`,
 /// versionable as dotfiles), named `[[sources]]`, and the installed artifacts
 /// `[[themes]]`/`[[plugins]]`/`[[kittens]]` with their `from` source. A v1 manifest
 /// (no `schema_version`, no artifact tables) still parses and is migrated to v2 on
@@ -108,7 +108,7 @@ public struct Manifest: Equatable, Sendable {
     /// Installed themes/plugins/kittens are listed with an empty `from` because
     /// their origin is not recorded on disk; `log` receives a note asking the user
     /// to fill each `from` so `sync` can reinstall them. `keys`/`snippets` are
-    /// captured by slug (their content stays in `managed/keys|snippets/*.conf`).
+    /// captured by slug (their content stays in `kittymgr/keys|snippets/*.conf`).
     public static func fromDisk(_ configDir: ConfigDir, log: (String) -> Void = { _ in }) throws -> Manifest {
         let profileStore = ProfileStore(root: configDir.profilesDir)
         let blockStore = BlockStore(managedDir: configDir.managedDir)

@@ -136,9 +136,10 @@ struct SynchronizerTests {
 
     @Test func syncMissingManifestThrows() throws {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-nomani-\(UUID().uuidString)")
-        try fm.createDirectory(at: root.appendingPathComponent("managed"), withIntermediateDirectories: true)
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
         #expect(throws: ManifestError.missing) {
-            try Synchronizer(configDir: ConfigDir(url: root), validator: StubValidator(.valid), reloader: StubReloader()).run(log: { _ in })
+            try Synchronizer(configDir: dir, validator: StubValidator(.valid), reloader: StubReloader()).run(log: { _ in })
         }
     }
 

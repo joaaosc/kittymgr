@@ -6,7 +6,7 @@ struct KittenStoreTests {
     private let fm = FileManager.default
 
     private func makeStore() -> (KittenStore, URL) {
-        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-kitten-\(UUID().uuidString)/managed/kittens")
+        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-kitten-\(UUID().uuidString)/kittymgr/kittens")
         return (KittenStore(root: root), root)
     }
 
@@ -67,8 +67,9 @@ struct KittenCommandTests {
 
     private func makeConfigDir() throws -> ConfigDir {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-kittencmd-\(UUID().uuidString)")
-        try fm.createDirectory(at: root.appendingPathComponent("managed"), withIntermediateDirectories: true)
-        return ConfigDir(url: root)
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        return dir
     }
 
     private func writeSource(_ content: String) throws -> URL {

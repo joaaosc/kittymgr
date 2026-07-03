@@ -14,8 +14,8 @@ struct ApplyTransactionTests {
 
     private func makeConfigDir() throws -> ConfigDir {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-apply-\(UUID().uuidString)")
-        try fm.createDirectory(at: root.appendingPathComponent("managed"), withIntermediateDirectories: true)
         let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
         try "font_size 12\n".write(to: dir.activeConf, atomically: true, encoding: .utf8)
         return dir
     }
@@ -27,7 +27,7 @@ struct ApplyTransactionTests {
     @Test func validChangeIsAppliedAndReloaded() throws {
         let dir = try makeConfigDir()
         let reloader = CountingReloader(.reloaded)
-        let plan = ApplyPlan(writes: ["managed/active.conf": "font_size 16\n"])
+        let plan = ApplyPlan(writes: [dir.relativePath(of: dir.activeConf): "font_size 16\n"])
 
         let result = try transaction(dir, validator: StubValidator(.valid), reloader: reloader)
             .apply(plan: plan, validationContent: "font_size 16\n", dryRun: false, log: { _ in })
@@ -41,7 +41,7 @@ struct ApplyTransactionTests {
         let dir = try makeConfigDir()
         let before = try Data(contentsOf: dir.activeConf)
         let reloader = CountingReloader(.reloaded)
-        let plan = ApplyPlan(writes: ["managed/active.conf": "font_size NOPE\n"])
+        let plan = ApplyPlan(writes: [dir.relativePath(of: dir.activeConf): "font_size NOPE\n"])
 
         #expect(throws: SafetyError.self) {
             try transaction(dir, validator: StubValidator(.invalid(diagnostics: "bad value")), reloader: reloader)
@@ -55,7 +55,7 @@ struct ApplyTransactionTests {
 
     @Test func skippedValidationKeepsChange() throws {
         let dir = try makeConfigDir()
-        let plan = ApplyPlan(writes: ["managed/active.conf": "font_size 20\n"])
+        let plan = ApplyPlan(writes: [dir.relativePath(of: dir.activeConf): "font_size 20\n"])
 
         let result = try transaction(dir, validator: StubValidator(.skipped(reason: "no kitty")), reloader: CountingReloader())
             .apply(plan: plan, validationContent: "font_size 20\n", dryRun: false, log: { _ in })
@@ -68,7 +68,7 @@ struct ApplyTransactionTests {
         let dir = try makeConfigDir()
         let before = try Data(contentsOf: dir.activeConf)
         let reloader = CountingReloader(.reloaded)
-        let plan = ApplyPlan(writes: ["managed/active.conf": "font_size 16\n"])
+        let plan = ApplyPlan(writes: [dir.relativePath(of: dir.activeConf): "font_size 16\n"])
 
         var out: [String] = []
         let result = try transaction(dir, validator: StubValidator(.valid), reloader: reloader)
@@ -118,9 +118,10 @@ struct ApplyCommandTests {
 
     @Test func failsWhenNoActiveProfile() throws {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-applycmd-\(UUID().uuidString)")
-        try fm.createDirectory(at: root.appendingPathComponent("managed"), withIntermediateDirectories: true)
+        let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
         #expect(throws: ProfileError.noActiveProfile) {
-            try ApplyCommand(configDir: ConfigDir(url: root), validator: StubValidator(.valid), reloader: CountingReloader())
+            try ApplyCommand(configDir: dir, validator: StubValidator(.valid), reloader: CountingReloader())
                 .run(log: { _ in })
         }
     }

@@ -19,7 +19,7 @@ struct PickerTests {
     private func makeFixture() throws -> Fixture {
         let managed = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-tui-\(UUID().uuidString)")
-            .appendingPathComponent("managed")
+            .appendingPathComponent("kittymgr")
         let fixture = Fixture(
             profileStore: ProfileStore(root: managed.appendingPathComponent("profiles")),
             pluginStore: PluginStore(root: managed.appendingPathComponent("plugins")),
@@ -104,7 +104,7 @@ struct PickerTests {
         try "font_size 12\n".write(to: dir.appendingPathComponent("base.conf"), atomically: true, encoding: .utf8)
         try fixture.pointer.set(try ProfileName(validating: "work"))
 
-        // Install a theme file directly under managed/themes/.
+        // Install a theme file directly under kittymgr/themes/.
         let themesDir = fixture.activeConf.deletingLastPathComponent().appendingPathComponent("themes")
         try fileManager.createDirectory(at: themesDir, withIntermediateDirectories: true)
         try "background #282828\n".write(to: themesDir.appendingPathComponent("gruvbox.conf"), atomically: true, encoding: .utf8)

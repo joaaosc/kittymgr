@@ -48,7 +48,8 @@ struct ConfigDirTests {
     @Test func derivedPaths() {
         let dir = ConfigDir(url: URL(fileURLWithPath: "/cfg/kitty"))
         #expect(dir.kittyConf.path == "/cfg/kitty/kitty.conf")
-        #expect(dir.managedDir.path == "/cfg/kitty/managed")
-        #expect(dir.activeConf.path == "/cfg/kitty/managed/active.conf")
+        #expect(dir.managedDir.path == "/cfg/kitty/kittymgr")
+        #expect(dir.activeConf.path == "/cfg/kitty/kittymgr/active.conf")
+        #expect(dir.lockFile.path == "/cfg/kitty/kittymgr/kittymgr.lock")
     }
 }

@@ -40,7 +40,7 @@ public struct Synchronizer {
         if dryRun {
             // Capture the full byte surface (binary-safe) so the preview reverts
             // every file exactly — a text-only capture would drop, then delete,
-            // preexisting binary files under managed/.
+            // preexisting binary files under kittymgr/.
             let beforeSurface = try store.currentSurface()
             let beforeText = beforeSurface.compactMapValues { String(data: $0, encoding: .utf8) }
             let existingDirs = managedDirectories()
@@ -212,7 +212,7 @@ public struct Synchronizer {
         try lock.write(to: configDir.lockFile)
     }
 
-    /// Every directory under `managed/`, standardized, as a set of paths.
+    /// Every directory under `kittymgr/`, standardized, as a set of paths.
     private func managedDirectories() -> Set<String> {
         directories(under: configDir.managedDir).reduce(into: Set<String>()) { $0.insert($1.standardizedFileURL.path) }
     }

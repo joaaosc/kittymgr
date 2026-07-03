@@ -32,7 +32,7 @@ public enum KittenError: Error, CustomStringConvertible, Equatable {
 }
 
 /// Installs, lists, and removes kittens in isolated directories under
-/// `managed/kittens/<name>/`.
+/// `kittymgr/kittens/<name>/`.
 ///
 /// Security posture: this store only *copies files*. It never executes a kitten,
 /// neither on install nor on config load — invocation is always an explicit user

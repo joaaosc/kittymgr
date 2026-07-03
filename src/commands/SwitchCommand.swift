@@ -49,7 +49,7 @@ public struct SwitchCommand {
             throw ProfileError.notFound(name.value)
         }
 
-        // `active.conf` is canonically `<configDir>/managed/active.conf`; recover
+        // `active.conf` is canonically `<configDir>/kittymgr/active.conf`; recover
         // the config root so the transaction can snapshot the whole managed surface.
         let configDir = ConfigDir(url: activeConf.deletingLastPathComponent().deletingLastPathComponent())
 

@@ -57,7 +57,7 @@ public struct PluginCommand {
     private func runList(log: (String) -> Void) throws {
         let plugins = try pluginStore.list()
         if plugins.isEmpty {
-            log("No plugins available under managed/plugins/.")
+            log("No plugins available under kittymgr/plugins/.")
             return
         }
         let context = try? resolveProfile()

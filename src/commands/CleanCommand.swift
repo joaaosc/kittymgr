@@ -4,13 +4,13 @@ import Foundation
 /// configuration. Conservative by design.
 ///
 /// - By default only *derived* data is removed: orphaned source caches under
-///   `managed/.cache/sources` and backup objects referenced by no snapshot. Both
+///   `kittymgr/.cache/sources` and backup objects referenced by no snapshot. Both
 ///   are regenerable, so this is always safe.
 /// - Installed themes/plugins/kittens are **never** removed unless `--artifacts` is
 ///   passed *and* confirmed with `--force`; that path is snapshot-protected first.
 ///   A manually installed artifact (absent from the manifest) therefore survives a
 ///   plain `clean`.
-/// - Nothing outside `managed/` is ever touched. `--dry-run` previews and writes
+/// - Nothing outside `kittymgr/` is ever touched. `--dry-run` previews and writes
 ///   nothing.
 public struct CleanCommand {
     public let configDir: ConfigDir

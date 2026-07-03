@@ -33,11 +33,25 @@ public enum KittymgrCLI {
         let positionals = options.filter { !$0.hasPrefix("-") }
         let flags = options.filter { $0.hasPrefix("-") }
 
+        let commandsRequiringCurrentLayout: Set<String> = [
+            "uninstall", "list", "create", "delete", "switch", "check", "current",
+            "plugin", "profile", "theme", "key", "snippet", "kitten", "manifest",
+            "source", "sync", "update", "clean", "backup", "apply", "ui", "pick",
+        ]
+        if commandsRequiringCurrentLayout.contains(command) {
+            do {
+                try ConfigDir.resolve().requireCurrentLayout(for: command)
+            } catch {
+                printError("\(error)")
+                return 1
+            }
+        }
+
         // `backup` consumes `--dry-run` natively (it prints a diff). For other
         // mutating commands the full apply-pipeline preview arrives in a later
         // milestone; until then `--dry-run` must still guarantee no writes happen.
         let mutatingWithoutPreview: Set<String> = [
-            "init", "uninstall", "create", "delete", "plugin", "ui", "pick",
+            "uninstall", "create", "delete", "plugin", "ui", "pick",
         ]
         if dryRun && mutatingWithoutPreview.contains(command) {
             print("[dry-run] \(command): no changes made. Use `kittymgr backup ... --dry-run` to preview diffs.")
@@ -47,7 +61,7 @@ public enum KittymgrCLI {
         do {
             switch command {
             case "init":
-                _ = try InitCommand(configDir: ConfigDir.resolve()).run()
+                _ = try InitCommand(configDir: ConfigDir.resolve(), dryRun: dryRun).run()
                 return 0
             case "uninstall":
                 let removeManaged = options.contains("--purge") || options.contains("--remove-managed")
@@ -533,7 +547,7 @@ public enum KittymgrCLI {
 
         Usage:
           kittymgr init                 Create the managed layer and inject the guarded include block.
-          kittymgr uninstall [--purge]  Remove the guarded block; --purge also deletes the managed directory.
+          kittymgr uninstall [--purge]  Remove the guarded block; --purge also deletes the kittymgr directory.
           kittymgr list                 List stored profiles.
           kittymgr create <name>        Create an empty profile.
           kittymgr delete <name> [-f]   Delete a profile (--force/-f skips confirmation).

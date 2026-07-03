@@ -9,7 +9,7 @@ public struct PluginName: Sendable, Equatable {
     }
 }
 
-/// A plugin discovered under `managed/plugins/<name>/`.
+/// A plugin discovered under `kittymgr/plugins/<name>/`.
 ///
 /// `priority` orders plugins within the generated include: lower priority is
 /// included earlier, so higher-priority plugins win for overlapping options

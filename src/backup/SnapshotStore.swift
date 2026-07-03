@@ -33,7 +33,7 @@ public enum BackupError: Error, CustomStringConvertible, Equatable {
 }
 
 /// Append-only, content-addressed snapshot store for the managed configuration
-/// surface (the user `kitty.conf` plus everything under `managed/`, excluding the
+/// surface (the user `kitty.conf` plus everything under `kittymgr/`, excluding the
 /// backup store itself).
 ///
 /// Versioning backend decision: kittymgr keeps its own content-addressed
@@ -44,7 +44,7 @@ public enum BackupError: Error, CustomStringConvertible, Equatable {
 /// trade-off — no packing/compression and a hand-written diff — is acceptable for
 /// the small text configs this tool manages.
 ///
-/// On-disk layout under `managed/backups/`:
+/// On-disk layout under `kittymgr/backups/`:
 /// - `objects/<sha256>` — unique file contents, written before the manifest.
 /// - `snapshots/<id>.json` — a manifest, published last via atomic rename.
 ///
@@ -222,7 +222,7 @@ public struct SnapshotStore {
 
     // MARK: Tracked surface
 
-    /// The managed surface: `kitty.conf` plus every regular file under `managed/`,
+    /// The managed surface: `kitty.conf` plus every regular file under `kittymgr/`,
     /// excluding the backup store and the source cache. Sorted for deterministic
     /// snapshots.
     func trackedFiles() -> [URL] {
@@ -234,7 +234,7 @@ public struct SnapshotStore {
         }
 
         // Never snapshot the backup store or the remote-source cache: both live
-        // under managed/ but are derived data, not part of the configuration.
+        // under kittymgr/ but are derived data, not part of the configuration.
         let excluded: Set<String> = [
             configDir.backupsDir.standardizedFileURL.path,
             configDir.managedDir.appendingPathComponent(".cache").standardizedFileURL.path,

@@ -82,7 +82,7 @@ struct IncludeBuilderTests {
     private func makeEnv() -> Env {
         let managed = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-include-\(UUID().uuidString)")
-            .appendingPathComponent("managed")
+            .appendingPathComponent("kittymgr")
         return Env(
             profileStore: ProfileStore(root: managed.appendingPathComponent("profiles")),
             pluginStore: PluginStore(root: managed.appendingPathComponent("plugins"))
@@ -166,7 +166,7 @@ struct PluginCommandTests {
     private func makeFixture() throws -> Fixture {
         let managed = fileManager.temporaryDirectory
             .appendingPathComponent("kittymgr-plugincmd-\(UUID().uuidString)")
-            .appendingPathComponent("managed")
+            .appendingPathComponent("kittymgr")
         let fixture = Fixture(
             profileStore: ProfileStore(root: managed.appendingPathComponent("profiles")),
             pluginStore: PluginStore(root: managed.appendingPathComponent("plugins")),

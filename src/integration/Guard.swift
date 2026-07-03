@@ -13,7 +13,8 @@ import Foundation
 public enum Guard {
     public static let beginMarker = "# >>> kittymgr (managed) >>>"
     public static let endMarker = "# <<< kittymgr (managed) <<<"
-    public static let includeLine = "include managed/active.conf"
+    public static let includeLine = "include kittymgr/active.conf"
+    public static let legacyIncludeLine = "include managed/active.conf"
 
     /// The exact text of the managed block, newline-terminated.
     public static func blockText() -> String {
@@ -29,6 +30,16 @@ public enum Guard {
     public static func contains(in content: String) -> Bool {
         let lines = content.components(separatedBy: "\n")
         return lines.contains(beginMarker) && lines.contains(endMarker)
+    }
+
+    public static func containsCurrentInclude(in content: String) -> Bool {
+        let lines = content.components(separatedBy: "\n")
+        return contains(in: content) && lines.contains(includeLine)
+    }
+
+    public static func containsLegacyInclude(in content: String) -> Bool {
+        let lines = content.components(separatedBy: "\n")
+        return contains(in: content) && lines.contains(legacyIncludeLine)
     }
 
     /// Insert the managed block at the top of `content`, leaving every existing

@@ -2,8 +2,8 @@ import Foundation
 
 /// `theme` / `key` / `snippet`: install, switch, and remove modular blocks.
 ///
-/// Each block lives in its own include file under `managed/themes`, `managed/keys`,
-/// or `managed/snippets`. A change is composed with the active profile and applied
+/// Each block lives in its own include file under `kittymgr/themes`, `kittymgr/keys`,
+/// or `kittymgr/snippets`. A change is composed with the active profile and applied
 /// through `ApplyTransaction`, so it is snapshot-protected, validated, and rolled
 /// back on failure (and previewable with `--dry-run`). Themes are mutually
 /// exclusive (one active at a time); keybindings and snippets are additive.
@@ -118,7 +118,7 @@ public struct BlockCommand {
         let themes = blockStore.availableThemes()
         let active = blockStore.state().activeTheme
         guard !themes.isEmpty else {
-            log("No themes installed under managed/themes/.")
+            log("No themes installed under kittymgr/themes/.")
             return
         }
         for theme in themes {

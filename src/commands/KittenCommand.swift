@@ -43,11 +43,11 @@ public struct KittenCommand {
     private func list(_ store: KittenStore, log: (String) -> Void) {
         let kittens = store.list()
         guard !kittens.isEmpty else {
-            log("No kittens installed under managed/kittens/.")
+            log("No kittens installed under kittymgr/kittens/.")
             return
         }
         for kitten in kittens {
-            let entry = kitten.entry.map { " — invoke: kitty +kitten managed/kittens/\(kitten.name)/\($0)" } ?? ""
+            let entry = kitten.entry.map { " — invoke: kitty +kitten kittymgr/kittens/\(kitten.name)/\($0)" } ?? ""
             log("\(kitten.name)\(entry)")
         }
     }
@@ -61,7 +61,7 @@ public struct KittenCommand {
                 throw KittenError.sourceMissing(source)
             }
             guard !store.exists(name) else { throw KittenError.alreadyInstalled(name.value) }
-            log("[dry-run] Would install kitten '\(name.value)' from \(source) into managed/kittens/\(name.value)/.")
+            log("[dry-run] Would install kitten '\(name.value)' from \(source) into kittymgr/kittens/\(name.value)/.")
             return
         }
 
@@ -70,7 +70,7 @@ public struct KittenCommand {
         let manifest = try store.install(name, from: sourceURL)
         log("Installed kitten '\(name.value)'. Not executed; invoke explicitly with kitty +kitten.")
         if let entry = manifest.entry {
-            log("  kitty +kitten managed/kittens/\(name.value)/\(entry)")
+            log("  kitty +kitten kittymgr/kittens/\(name.value)/\(entry)")
         }
     }
 

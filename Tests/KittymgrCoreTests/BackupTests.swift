@@ -7,15 +7,15 @@ struct SnapshotStoreTests {
 
     private func makeConfigDir() throws -> ConfigDir {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-backup-\(UUID().uuidString)")
+        let dir = ConfigDir(url: root)
         try fm.createDirectory(
-            at: root.appendingPathComponent("managed/profiles/work"),
+            at: dir.profilesDir.appendingPathComponent("work"),
             withIntermediateDirectories: true
         )
-        let dir = ConfigDir(url: root)
-        try "include managed/active.conf\n".write(to: dir.kittyConf, atomically: true, encoding: .utf8)
+        try "include kittymgr/active.conf\n".write(to: dir.kittyConf, atomically: true, encoding: .utf8)
         try "font_size 12\n".write(to: dir.managedDir.appendingPathComponent("active.conf"), atomically: true, encoding: .utf8)
         try "background #000000\n".write(
-            to: root.appendingPathComponent("managed/profiles/work/base.conf"),
+            to: dir.profilesDir.appendingPathComponent("work/base.conf"),
             atomically: true,
             encoding: .utf8
         )
@@ -31,19 +31,19 @@ struct SnapshotStoreTests {
         #expect(listed.first?.id == manifest.id)
         #expect(listed.first?.label == "demo")
         #expect(manifest.files.map(\.path).sorted()
-            == ["kitty.conf", "managed/active.conf", "managed/profiles/work/base.conf"])
+            == ["kitty.conf", "kittymgr/active.conf", "kittymgr/profiles/work/base.conf"])
     }
 
     @Test func restoreReturnsByteForByteState() throws {
         let dir = try makeConfigDir()
         let store = SnapshotStore(configDir: dir)
-        let base = dir.url.appendingPathComponent("managed/profiles/work/base.conf")
+        let base = dir.profilesDir.appendingPathComponent("work/base.conf")
         let original = try Data(contentsOf: base)
         let snapshot = try store.create(label: "pre")
 
         // Modify a tracked file and add a new one after the snapshot.
         try "background #ffffff\n".write(to: base, atomically: true, encoding: .utf8)
-        let extra = dir.url.appendingPathComponent("managed/profiles/work/extra.conf")
+        let extra = dir.profilesDir.appendingPathComponent("work/extra.conf")
         try "cursor_shape beam\n".write(to: extra, atomically: true, encoding: .utf8)
 
         try store.restore(snapshot)
@@ -54,7 +54,7 @@ struct SnapshotStoreTests {
 
     @Test func backupStoreIsExcludedFromTrackedSurface() throws {
         let store = SnapshotStore(configDir: try makeConfigDir())
-        _ = try store.create()             // creates managed/backups/...
+        _ = try store.create()             // creates kittymgr/backups/...
         let manifest = try store.create()  // must not re-capture the backup store
         #expect(manifest.files.allSatisfy { !$0.path.contains("backups") })
     }
@@ -82,8 +82,8 @@ struct BackupCommandTests {
 
     private func makeConfigDir() throws -> (ConfigDir, URL) {
         let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-backupcmd-\(UUID().uuidString)")
-        try fm.createDirectory(at: root.appendingPathComponent("managed"), withIntermediateDirectories: true)
         let dir = ConfigDir(url: root)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
         let active = dir.managedDir.appendingPathComponent("active.conf")
         try "font_size 12\n".write(to: active, atomically: true, encoding: .utf8)
         return (dir, active)

@@ -19,8 +19,8 @@ public struct UninstallCommand {
 
         if fm.fileExists(atPath: configDir.kittyConf.path) {
             let content = try String(contentsOf: configDir.kittyConf, encoding: .utf8)
-            if Guard.contains(in: content) {
-                let cleaned = Guard.remove(from: content)
+            if try Guard.state(of: content).hasBlock {
+                let cleaned = try Guard.remove(from: content)
                 let isEmptyNow = cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 if meta.createdConf, isEmptyNow {
                     try fm.removeItem(at: configDir.kittyConf)

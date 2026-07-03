@@ -109,37 +109,38 @@ public struct DoctorCommand {
     private func managedLayerFindings() -> [DoctorFinding] {
         let fm = FileManager.default
         let layout = configDir.detectedLayout(fileManager: fm)
+        var out = [configDirectoryWritableFinding(fileManager: fm)]
         switch layout {
         case .absent:
-            return [DoctorFinding(.warn, "layout", "not initialized; run `kittymgr init`")]
+            out.append(DoctorFinding(.warn, "layout", "not initialized; run `kittymgr init`"))
+            return out
         case .legacy:
-            return [
+            out.append(
                 DoctorFinding(
                     .warn,
                     "layout",
                     "legacy layout at managed/; run `kittymgr init` to migrate to kittymgr/"
-                ),
-            ]
+                )
+            )
+            return out
         case .mixed(let detail):
-            return [
+            out.append(
                 DoctorFinding(
                     .fail,
                     "layout",
                     "mixed layout detected (\(detail)); repair manually, then run `kittymgr init`"
-                ),
-            ]
+                )
+            )
+            return out
         case .current:
             break
         }
-        var out = [
-            DoctorFinding(.ok, "layout", "new layout at \(configDir.relativePath(of: configDir.managedDir))/"),
-            DoctorFinding(.ok, "managed layer", "present at \(configDir.relativePath(of: configDir.managedDir))"),
-        ]
+        out.append(DoctorFinding(.ok, "layout", "new layout at \(configDir.relativePath(of: configDir.managedDir))/"))
+        out.append(DoctorFinding(.ok, "managed layer", "present at \(configDir.relativePath(of: configDir.managedDir))"))
+        out.append(kittyConfLinkFinding(fileManager: fm))
 
         if let content = try? String(contentsOf: configDir.kittyConf, encoding: .utf8) {
-            out.append(Guard.containsCurrentInclude(in: content)
-                ? DoctorFinding(.ok, "kitty.conf block", "managed include block present")
-                : DoctorFinding(.warn, "kitty.conf block", "managed block missing from kitty.conf; run `kittymgr init`"))
+            out.append(anchorFinding(for: content))
         } else {
             out.append(DoctorFinding(.warn, "kitty.conf block", "kitty.conf not found; run `kittymgr init`"))
         }
@@ -149,9 +150,14 @@ public struct DoctorCommand {
     private func integrityFindings() -> [DoctorFinding] {
         var out: [DoctorFinding] = []
 
-        if FileManager.default.fileExists(atPath: configDir.lockFile.path) {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: configDir.legacyLockFile.path) {
+            out.append(DoctorFinding(.fail, "lockfile", "orphan root lockfile at kittymgr.lock; move it to kittymgr/kittymgr.lock or remove it"))
+        } else if fm.fileExists(atPath: configDir.lockFile.path) {
             let lock = Lockfile.load(configDir.lockFile)
             out.append(DoctorFinding(.ok, "lockfile", "\(lock.sources.count) pinned source(s)"))
+        } else {
+            out.append(DoctorFinding(.ok, "lockfile", "not present"))
         }
 
         let store = SnapshotStore(configDir: configDir)
@@ -163,5 +169,45 @@ public struct DoctorCommand {
                 : DoctorFinding(.fail, "backups", "\(missing.count) snapshot object(s) missing from the store"))
         }
         return out
+    }
+
+    private func configDirectoryWritableFinding(fileManager fm: FileManager) -> DoctorFinding {
+        if fm.fileExists(atPath: configDir.url.path) {
+            return fm.isWritableFile(atPath: configDir.url.path)
+                ? DoctorFinding(.ok, "config dir", "writable at \(configDir.url.path)")
+                : DoctorFinding(.fail, "config dir", "not writable at \(configDir.url.path)")
+        }
+
+        let parent = configDir.url.deletingLastPathComponent()
+        return fm.isWritableFile(atPath: parent.path)
+            ? DoctorFinding(.ok, "config dir", "missing; parent is writable")
+            : DoctorFinding(.fail, "config dir", "missing and parent is not writable")
+    }
+
+    private func kittyConfLinkFinding(fileManager fm: FileManager) -> DoctorFinding {
+        if let destination = try? fm.destinationOfSymbolicLink(atPath: configDir.kittyConf.path) {
+            let target = destination.hasPrefix("/")
+                ? URL(fileURLWithPath: destination)
+                : configDir.kittyConf.deletingLastPathComponent().appendingPathComponent(destination).standardizedFileURL
+            return DoctorFinding(.ok, "kitty.conf", "symlink -> \(target.path) (preserved by writes)")
+        }
+        return DoctorFinding(.ok, "kitty.conf", "regular file")
+    }
+
+    private func anchorFinding(for content: String) -> DoctorFinding {
+        do {
+            switch try Guard.state(of: content) {
+            case .current:
+                return DoctorFinding(.ok, "kitty.conf block", "managed include block present")
+            case .legacy:
+                return DoctorFinding(.fail, "kitty.conf block", "legacy include points at managed/active.conf; run `kittymgr init`")
+            case .absent:
+                return DoctorFinding(.warn, "kitty.conf block", "managed block missing while kittymgr/ is present; run `kittymgr init`")
+            }
+        } catch let error as SafetyError {
+            return DoctorFinding(.fail, "kitty.conf block", error.description)
+        } catch {
+            return DoctorFinding(.fail, "kitty.conf block", "\(error)")
+        }
     }
 }

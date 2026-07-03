@@ -97,4 +97,54 @@ struct DoctorCommandTests {
         #expect(ok == false)
         #expect(out.contains { $0.contains("[FAIL] backups") })
     }
+
+    @Test func corruptedAnchorFailsWithRepairMessage() throws {
+        let dir = try makeConfig()
+        try "\(Guard.beginMarker)\nfont_size 12\n".write(to: dir.kittyConf, atomically: true, encoding: .utf8)
+
+        var out: [String] = []
+        let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
+
+        #expect(ok == false)
+        #expect(out.contains { $0.contains("[FAIL] kitty.conf block") && $0.contains("begin marker without end marker") })
+        #expect(out.contains { $0.contains("Nothing was changed") && $0.contains("kittymgr init") })
+    }
+
+    @Test func missingAnchorWithManagedDirectoryWarns() throws {
+        let dir = try makeConfig()
+        try "font_size 12\n".write(to: dir.kittyConf, atomically: true, encoding: .utf8)
+
+        var out: [String] = []
+        let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
+
+        #expect(ok)
+        #expect(out.contains { $0.contains("[WARN] kitty.conf block") && $0.contains("managed block missing") })
+    }
+
+    @Test func symlinkedKittyConfIsReported() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("kittymgr-doctor-\(UUID().uuidString)")
+        let dir = ConfigDir(url: root)
+        let dotfiles = root.appendingPathComponent("dotfiles")
+        try fm.createDirectory(at: dotfiles, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        try Guard.insert(into: "font_size 12\n").write(to: dotfiles.appendingPathComponent("kitty.conf"), atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(atPath: dir.kittyConf.path, withDestinationPath: "dotfiles/kitty.conf")
+
+        var out: [String] = []
+        let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
+
+        #expect(ok)
+        #expect(out.contains { $0.contains("[OK] kitty.conf") && $0.contains("symlink ->") })
+    }
+
+    @Test func orphanRootLockfileFails() throws {
+        let dir = try makeConfig()
+        try "{\"sources\":[]}\n".write(to: dir.legacyLockFile, atomically: true, encoding: .utf8)
+
+        var out: [String] = []
+        let ok = DoctorCommand(configDir: dir, probe: FakeProbe()).run { out.append($0) }
+
+        #expect(ok == false)
+        #expect(out.contains { $0.contains("[FAIL] lockfile") && $0.contains("orphan root lockfile") })
+    }
 }

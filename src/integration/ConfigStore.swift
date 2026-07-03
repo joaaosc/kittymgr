@@ -34,7 +34,12 @@ struct Meta: Sendable, Equatable {
 enum ConfigStore {
     /// Atomic write (temp file + rename) to avoid leaving a partially written config.
     static func writeAtomically(_ content: String, to url: URL) throws {
-        try content.write(to: url, atomically: true, encoding: .utf8)
+        let destination = try writeDestination(for: url)
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(content.utf8).write(to: destination, options: .atomic)
     }
 
     static func writeMeta(_ meta: Meta, to url: URL) throws {
@@ -70,5 +75,38 @@ enum ConfigStore {
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: date)
+    }
+
+    private static func writeDestination(for url: URL) throws -> URL {
+        let fm = FileManager.default
+        var current = url
+        var visited: Set<String> = []
+
+        for _ in 0..<16 {
+            guard let destination = try? fm.destinationOfSymbolicLink(atPath: current.path) else {
+                return current
+            }
+            guard visited.insert(current.path).inserted else {
+                throw ConfigStoreError.tooManySymbolicLinks(url.path)
+            }
+            if destination.hasPrefix("/") {
+                current = URL(fileURLWithPath: destination)
+            } else {
+                current = current.deletingLastPathComponent().appendingPathComponent(destination)
+            }
+            current = current.standardizedFileURL
+        }
+        throw ConfigStoreError.tooManySymbolicLinks(url.path)
+    }
+}
+
+enum ConfigStoreError: Error, Equatable, CustomStringConvertible {
+    case tooManySymbolicLinks(String)
+
+    var description: String {
+        switch self {
+        case .tooManySymbolicLinks(let path):
+            return "too many symbolic links while resolving \(path)"
+        }
     }
 }

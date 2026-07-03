@@ -32,6 +32,12 @@ public struct InitCommand {
     private func initializeCurrentLayout(log: (String) -> Void) throws -> Bool {
         let fm = FileManager.default
 
+        let confExists = fm.fileExists(atPath: configDir.kittyConf.path)
+        let original = confExists
+            ? try String(contentsOf: configDir.kittyConf, encoding: .utf8)
+            : ""
+        let anchorState = try Guard.state(of: original)
+
         try fm.createDirectory(at: configDir.url, withIntermediateDirectories: true)
         try fm.createDirectory(at: configDir.managedDir, withIntermediateDirectories: true)
         if !fm.fileExists(atPath: configDir.activeConf.path) {
@@ -41,12 +47,7 @@ public struct InitCommand {
 
         log("Config directory: \(configDir.url.path)")
 
-        let confExists = fm.fileExists(atPath: configDir.kittyConf.path)
-        let original = confExists
-            ? try String(contentsOf: configDir.kittyConf, encoding: .utf8)
-            : ""
-
-        if Guard.containsCurrentInclude(in: original) {
+        if anchorState == .current {
             log("Managed block already present; nothing to do.")
             return false
         }
@@ -73,6 +74,7 @@ public struct InitCommand {
         let original = confExists
             ? try String(contentsOf: configDir.kittyConf, encoding: .utf8)
             : ""
+        _ = try Guard.state(of: original)
 
         log("Legacy layout detected (managed/).")
 
@@ -114,7 +116,7 @@ public struct InitCommand {
         }
         try SamplePlugins.seed(into: configDir.pluginsDir)
 
-        let migrated = Guard.insert(into: Guard.remove(from: original))
+        let migrated = try Guard.insert(into: Guard.remove(from: original))
         try ConfigStore.writeAtomically(migrated, to: configDir.kittyConf)
         try ConfigStore.writeMeta(meta, to: configDir.metaFile)
         log("Updated kitty.conf anchor to \(Guard.includeLine).")
@@ -130,7 +132,7 @@ public struct InitCommand {
             throw ConfigLayoutError.mixed(detail)
         case .legacy:
             let original = (try? String(contentsOf: configDir.kittyConf, encoding: .utf8)) ?? ""
-            let migrated = Guard.insert(into: Guard.remove(from: original))
+            let migrated = try Guard.insert(into: Guard.remove(from: original))
             let diff = UnifiedDiff.diffStates(
                 old: ["kitty.conf": original],
                 new: ["kitty.conf": migrated]
@@ -147,17 +149,21 @@ public struct InitCommand {
             return true
         case .current:
             let original = (try? String(contentsOf: configDir.kittyConf, encoding: .utf8)) ?? ""
-            if Guard.containsCurrentInclude(in: original) {
+            if try Guard.state(of: original) == .current {
                 log("[dry-run] Managed block already present; nothing to do.")
                 return false
             }
-            let proposed = Guard.insert(into: original)
+            let proposed = try Guard.insert(into: original)
             let diff = UnifiedDiff.diffStates(old: ["kitty.conf": original], new: ["kitty.conf": proposed])
             log("[dry-run] Would update kitty.conf with '\(Guard.includeLine)'.")
             if !diff.isEmpty { log(diff) }
             return true
         case .absent:
+            let original = (try? String(contentsOf: configDir.kittyConf, encoding: .utf8)) ?? ""
+            let proposed = try Guard.insert(into: original)
+            let diff = UnifiedDiff.diffStates(old: ["kitty.conf": original], new: ["kitty.conf": proposed])
             log("[dry-run] Would create kittymgr/, kittymgr/active.conf, and a kitty.conf anchor for '\(Guard.includeLine)'.")
+            if !diff.isEmpty { log(diff) }
             return true
         }
     }

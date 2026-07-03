@@ -14,10 +14,30 @@ public protocol ConfigValidating {
     func validate(content: String) -> ValidationResult
 }
 
+/// A malformed kittymgr anchor in kitty.conf. Commands surface this as a hard
+/// safety error because silently rewriting a partial or edited block can discard
+/// user-owned config.
+public struct AnchorCorruption: Sendable, Equatable, CustomStringConvertible {
+    public let detail: String
+    public let line: Int
+    public let repair: String
+
+    public init(detail: String, line: Int, repair: String) {
+        self.detail = detail
+        self.line = line
+        self.repair = repair
+    }
+
+    public var description: String {
+        "corrupted kittymgr block in kitty.conf (\(detail) on line \(line)). Nothing was changed. \(repair)"
+    }
+}
+
 /// Errors raised by the safety gate before activation.
 public enum SafetyError: Error, CustomStringConvertible, Equatable {
     case invalidConfiguration(String)
     case unresolvedConflicts(Int)
+    case corruptedAnchor(AnchorCorruption)
 
     public var description: String {
         switch self {
@@ -25,6 +45,8 @@ public enum SafetyError: Error, CustomStringConvertible, Equatable {
             return "composed configuration is invalid:\n\(diagnostics)"
         case let .unresolvedConflicts(count):
             return "\(count) unresolved conflict(s); re-run with --force to proceed"
+        case let .corruptedAnchor(issue):
+            return issue.description
         }
     }
 }

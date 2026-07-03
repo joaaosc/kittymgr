@@ -114,4 +114,60 @@ struct InitUninstallTests {
 
         #expect(fm.fileExists(atPath: dir.managedDir.path) == false)
     }
+
+    @Test func initFailsWithoutWritingWhenAnchorIsCorrupted() throws {
+        let dir = try makeConfigDir()
+        let corrupted = "\(Guard.beginMarker)\nfont_size 12\n"
+        try write(corrupted, to: dir.kittyConf)
+
+        #expect(throws: SafetyError.self) {
+            try InitCommand(configDir: dir).run(log: self.silent)
+        }
+
+        #expect(try read(dir.kittyConf) == corrupted)
+        #expect(fm.fileExists(atPath: dir.managedDir.path) == false)
+    }
+
+    @Test func initDryRunFailsWithoutWritingWhenAnchorIsCorrupted() throws {
+        let dir = try makeConfigDir()
+        let corrupted = "\(Guard.beginMarker)\nfont_size 12\n"
+        try write(corrupted, to: dir.kittyConf)
+
+        #expect(throws: SafetyError.self) {
+            try InitCommand(configDir: dir, dryRun: true).run(log: self.silent)
+        }
+
+        #expect(try read(dir.kittyConf) == corrupted)
+        #expect(fm.fileExists(atPath: dir.managedDir.path) == false)
+    }
+
+    @Test func uninstallFailsWithoutWritingWhenAnchorIsCorrupted() throws {
+        let dir = try makeConfigDir()
+        try write("font_size 12\n", to: dir.kittyConf)
+        _ = try InitCommand(configDir: dir).run(log: silent)
+        let corrupted = "\(Guard.beginMarker)\nfont_size 12\n"
+        try write(corrupted, to: dir.kittyConf)
+        let managedExistsBefore = fm.fileExists(atPath: dir.managedDir.path)
+
+        #expect(throws: SafetyError.self) {
+            try UninstallCommand(configDir: dir, removeManaged: true).run(log: self.silent)
+        }
+
+        #expect(try read(dir.kittyConf) == corrupted)
+        #expect(fm.fileExists(atPath: dir.managedDir.path) == managedExistsBefore)
+    }
+
+    @Test func initPreservesSymlinkedKittyConf() throws {
+        let dir = try makeConfigDir()
+        let dotfiles = dir.url.appendingPathComponent("dotfiles")
+        let target = dotfiles.appendingPathComponent("kitty.conf")
+        try fm.createDirectory(at: dotfiles, withIntermediateDirectories: true)
+        try "font_size 12\n".write(to: target, atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(atPath: dir.kittyConf.path, withDestinationPath: "dotfiles/kitty.conf")
+
+        _ = try InitCommand(configDir: dir).run(log: silent)
+
+        #expect((try? fm.destinationOfSymbolicLink(atPath: dir.kittyConf.path)) == "dotfiles/kitty.conf")
+        #expect(try read(target).contains(Guard.includeLine))
+    }
 }

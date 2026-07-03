@@ -76,6 +76,20 @@ public struct ApplyTransaction {
             return preview(plan: plan, validationContent: validationContent, log: log)
         }
 
+        if try planMakesNoChanges(plan) {
+            let validation = validator.validate(content: validationContent)
+            switch validation {
+            case let .invalid(diagnostics):
+                throw SafetyError.invalidConfiguration(diagnostics)
+            case let .skipped(reason):
+                log("Validation skipped (\(reason)).")
+            case .valid:
+                break
+            }
+            log("No changes.")
+            return Result(status: .applied, snapshotID: nil, validation: validation, reload: nil)
+        }
+
         // 1. Capture the pre-apply snapshot — the rollback point.
         let snapshot = try snapshotStore.create(label: "pre-apply")
 
@@ -133,6 +147,14 @@ public struct ApplyTransaction {
     }
 
     // MARK: Write
+
+    private func planMakesNoChanges(_ plan: ApplyPlan) throws -> Bool {
+        let current = try snapshotStore.currentSurface()
+        var proposed = current
+        for (path, content) in plan.writes { proposed[path] = Data(content.utf8) }
+        for path in plan.deletes { proposed[path] = nil }
+        return proposed == current
+    }
 
     private func write(_ plan: ApplyPlan) throws {
         let fm = FileManager.default

@@ -246,6 +246,26 @@ private final class ArtifactFetcher: SourceFetching, @unchecked Sendable {
     }
 }
 
+private final class CacheWritingArtifactFetcher: SourceFetching, @unchecked Sendable {
+    let roots: [String: URL]
+    let cacheDir: URL
+
+    init(_ roots: [String: URL], cacheDir: URL) {
+        self.roots = roots
+        self.cacheDir = cacheDir
+    }
+
+    func fetch(_ source: Source) throws -> FetchedSource {
+        let marker = cacheDir.appendingPathComponent(source.name).appendingPathComponent("marker")
+        try FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "cached\n".write(to: marker, atomically: true, encoding: .utf8)
+        guard let root = roots[source.name] else {
+            throw SourceError.fetchFailed(source: source.name, detail: "no stub root for \(source.name)")
+        }
+        return FetchedSource(root: root)
+    }
+}
+
 struct ArtifactSyncTests {
     private let fm = FileManager.default
 
@@ -296,7 +316,7 @@ struct ArtifactSyncTests {
         return (dir, ArtifactFetcher(["themesrc": themeRoot, "pluginsrc": pluginRoot]))
     }
 
-    private func sync(_ dir: ConfigDir, fetcher: ArtifactFetcher, dryRun: Bool = false, validation: ValidationResult = .valid) -> Synchronizer {
+    private func sync(_ dir: ConfigDir, fetcher: any SourceFetching, dryRun: Bool = false, validation: ValidationResult = .valid) -> Synchronizer {
         Synchronizer(configDir: dir, dryRun: dryRun, fetcher: fetcher, validator: StubValidator(validation), reloader: StubReloader())
     }
 
@@ -328,6 +348,16 @@ struct ArtifactSyncTests {
         #expect(out.joined(separator: "\n").contains("[dry-run]"))
         #expect(BlockStore(managedDir: dir.managedDir).themeExists("mytheme") == false)
         #expect(fm.fileExists(atPath: dir.pluginsDir.appendingPathComponent("myplugin").path) == false)
+    }
+
+    @Test func dryRunRestoresFetcherCacheWrites() throws {
+        let (dir, artifactFetcher) = try makeScenario()
+        let fetcher = CacheWritingArtifactFetcher(artifactFetcher.roots, cacheDir: dir.cacheDir)
+
+        try sync(dir, fetcher: fetcher, dryRun: true).run { _ in }
+
+        #expect(fm.fileExists(atPath: dir.cacheDir.appendingPathComponent("themesrc/marker").path) == false)
+        #expect(fm.fileExists(atPath: dir.cacheDir.appendingPathComponent("pluginsrc/marker").path) == false)
     }
 
     @Test func invalidSyncRollsBackStagedArtifacts() throws {

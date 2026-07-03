@@ -13,8 +13,11 @@ public final class TUIEngine {
     private let activeConf: URL
     private let validator: any ConfigValidating
     private let reloader: any Reloading
+    private let sourceFetcher: (any SourceFetching)?
+    private let terminal: any TerminalControlling
+    private let readKey: () throws -> TUIKey
+    private let writeOutput: (String) -> Void
     
-    private let terminal = Terminal()
     private var selectedPanel = 0 // 0: Profiles, 1: Plugins, 2: Themes, 3: Backups
     
     // Lists and selections
@@ -41,7 +44,14 @@ public final class TUIEngine {
         activePointer: ActivePointer,
         activeConf: URL,
         validator: any ConfigValidating = KittyConfigValidator(),
-        reloader: any Reloading = KittenReloader()
+        reloader: any Reloading = KittenReloader(),
+        sourceFetcher: (any SourceFetching)? = nil,
+        terminal: any TerminalControlling = Terminal(),
+        readKey: @escaping () throws -> TUIKey = { KeyReader.readKey() },
+        write: @escaping (String) -> Void = {
+            print($0, terminator: "")
+            fflush(stdout)
+        }
     ) {
         self.profileStore = profileStore
         self.pluginStore = pluginStore
@@ -49,9 +59,16 @@ public final class TUIEngine {
         self.activeConf = activeConf
         self.validator = validator
         self.reloader = reloader
+        self.sourceFetcher = sourceFetcher
+        self.terminal = terminal
+        self.readKey = readKey
+        self.writeOutput = write
     }
     
     public func start() throws {
+        guard terminal.isInteractive else {
+            throw TerminalError.nonInteractive
+        }
         try terminal.enableRawMode()
         defer {
             terminal.disableRawMode()
@@ -62,7 +79,7 @@ public final class TUIEngine {
         while true {
             render()
             
-            let key = KeyReader.readKey()
+            let key = try readKey()
             switch key {
             case .escape, .ctrlC:
                 return
@@ -87,18 +104,12 @@ public final class TUIEngine {
                 moveSelection(up: false)
             case .enter:
                 try handleEnter()
-            case .char("c"), .char("C"):
-                if selectedPanel == 0 {
-                    try handleCreateProfile()
-                }
-            case .char("d"), .char("D"):
-                if selectedPanel == 0 {
-                    try handleDeleteProfile()
-                }
             case .char("s"), .char("S"):
-                if selectedPanel == 3 {
-                    try handleCreateBackup()
-                }
+                try handleSync()
+            case .char("u"), .char("U"):
+                try handleUpdate()
+            case .char("l"), .char("L"):
+                try handleClean()
             case .char("r"), .char("R"):
                 try loadData()
                 showSuccess("Dados recarregados com sucesso.")
@@ -189,88 +200,129 @@ public final class TUIEngine {
         }
     }
     
-    private func runInCookedMode(_ action: () throws -> Void) {
-        terminal.disableRawMode()
-        print("\u{001B}[2J\u{001B}[H", terminator: "") // Clear and home
-        fflush(stdout)
-        
-        do {
-            try action()
-        } catch {
-            print("\n\(ANSI.red)\(ANSI.bold)Erro:\(ANSI.reset) \(error)")
+    private func previewAndConfirm(
+        title: String,
+        preview: ((String) -> Void) throws -> Void,
+        apply: ((String) -> Void) throws -> Void
+    ) throws {
+        let previewResult = captureOutput(preview)
+        if let error = previewResult.error {
+            renderActionScreen(
+                title: title,
+                subtitle: "Preview falhou.",
+                body: previewResult.output + "\nErro: \(error)",
+                footer: "[Enter/Esc] voltar"
+            )
+            showError("Preview falhou: \(error)")
+            try waitForDismiss()
+            return
         }
-        
-        print("\nPressione qualquer tecla para retornar ao TUI do kittymgr...")
-        fflush(stdout)
-        
-        var buffer = [UInt8](repeating: 0, count: 1)
-        _ = read(STDIN_FILENO, &buffer, 1)
-        
+
+        while true {
+            renderActionScreen(
+                title: title,
+                subtitle: "O que vai mudar:",
+                body: previewResult.output,
+                footer: "[Enter] aplicar   [Esc] cancelar"
+            )
+
+            switch try readKey() {
+            case .enter:
+                let applyResult = captureOutput(apply)
+                try loadData()
+                if let error = applyResult.error {
+                    renderActionScreen(
+                        title: title,
+                        subtitle: "Apply falhou.",
+                        body: applyResult.output + "\nErro: \(error)",
+                        footer: "[Enter/Esc] voltar"
+                    )
+                    showError("Erro: \(error)")
+                } else {
+                    renderActionScreen(
+                        title: title,
+                        subtitle: "Resultado:",
+                        body: applyResult.output,
+                        footer: "[Enter/Esc] voltar"
+                    )
+                    showSuccess("Aplicado. Veja o resultado da acao.")
+                }
+                try waitForDismiss()
+                return
+            case .escape, .ctrlC:
+                showSuccess("Cancelado; nada escrito.")
+                return
+            default:
+                break
+            }
+        }
+    }
+
+    private func captureOutput(_ action: (((String) -> Void) throws -> Void)) -> (output: String, error: Error?) {
+        var lines: [String] = []
         do {
-            try terminal.enableRawMode()
-            try loadData()
+            try action { lines.append($0) }
+            return (lines.joined(separator: "\n"), nil)
         } catch {
-            print("Erro ao reativar modo bruto: \(error)")
+            return (lines.joined(separator: "\n"), error)
+        }
+    }
+
+    private func renderActionScreen(title: String, subtitle: String, body: String, footer: String) {
+        let visibleBody = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "(sem mudancas)" : body
+        emit(
+            ANSI.clear + ANSI.home
+            + "\(ANSI.bold)\(title)\(ANSI.reset)\n\n"
+            + "\(subtitle)\n\n"
+            + "\(visibleBody)\n\n"
+            + "\(ANSI.dim)\(footer)\(ANSI.reset)"
+        )
+    }
+
+    private func waitForDismiss() throws {
+        while true {
+            switch try readKey() {
+            case .enter, .escape, .ctrlC, .char("q"), .char("Q"):
+                return
+            default:
+                break
+            }
         }
     }
     
     private func handleSwitchProfile() throws {
         guard profiles.indices.contains(selectedProfileIndex) else { return }
         let target = profiles[selectedProfileIndex]
-        
-        // Attempt clean switch
-        do {
-            try SwitchCommand(
-                profileStore: profileStore,
-                pluginStore: pluginStore,
-                activePointer: activePointer,
-                activeConf: activeConf,
-                rawName: target,
-                force: false,
-                validator: validator,
-                reloader: reloader
-            ).run(log: { _ in })
-            showSuccess("Ativado perfil '\(target)' com sucesso.")
-            try loadData()
-        } catch let error as SafetyError {
-            if case .unresolvedConflicts = error {
-                // Run in cooked mode to show conflicts and ask for force switch
-                runInCookedMode {
-                    print("\(ANSI.yellow)\(ANSI.bold)Conflitos detectados no perfil '\(target)':\(ANSI.reset)\n")
-                    try SwitchCommand(
-                        profileStore: self.profileStore,
-                        pluginStore: self.pluginStore,
-                        activePointer: self.activePointer,
-                        activeConf: self.activeConf,
-                        rawName: target,
-                        force: false,
-                        validator: self.validator,
-                        reloader: self.reloader
-                    ).run()
-                    
-                    print("\nDeseja forçar a ativação ignorando os conflitos? (s/N): ", terminator: "")
-                    fflush(stdout)
-                    let response = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    if response == "s" || response == "sim" {
-                        try SwitchCommand(
-                            profileStore: self.profileStore,
-                            pluginStore: self.pluginStore,
-                            activePointer: self.activePointer,
-                            activeConf: self.activeConf,
-                            rawName: target,
-                            force: true,
-                            validator: self.validator,
-                            reloader: self.reloader
-                        ).run()
-                        print("\nPerfil '\(target)' ativado com força.")
-                    }
-                }
-            } else {
-                showError("Erro: \(error)")
+
+        try previewAndConfirm(
+            title: "Ativar perfil '\(target)'",
+            preview: { log in
+                try SwitchCommand(
+                    profileStore: self.profileStore,
+                    pluginStore: self.pluginStore,
+                    activePointer: self.activePointer,
+                    activeConf: self.activeConf,
+                    rawName: target,
+                    force: false,
+                    dryRun: true,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            },
+            apply: { log in
+                try SwitchCommand(
+                    profileStore: self.profileStore,
+                    pluginStore: self.pluginStore,
+                    activePointer: self.activePointer,
+                    activeConf: self.activeConf,
+                    rawName: target,
+                    force: false,
+                    dryRun: false,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
             }
-        } catch {
-            showError("Erro: \(error)")
-        }
+        )
     }
     
     private func handleTogglePlugin() throws {
@@ -285,113 +337,144 @@ public final class TUIEngine {
         let profileName = try ProfileName(validating: activeProfile)
         let enabled = Set(profileStore.metadata(for: profileName).enabledPlugins)
         let isEnabled = enabled.contains(plugin.name)
-        
         let action: PluginCommand.Action = isEnabled ? .disable(plugin.name) : .enable(plugin.name)
-        
-        do {
-            try PluginCommand(
-                action: action,
-                profileStore: profileStore,
-                pluginStore: pluginStore,
-                activePointer: activePointer,
-                activeConf: activeConf,
-                reloader: reloader
-            ).run(log: { _ in })
-            showSuccess("\(isEnabled ? "Desabilitado" : "Habilitado") plugin '\(plugin.name)'.")
-            try loadData()
-        } catch {
-            showError("Erro: \(error)")
-        }
+        let label = isEnabled ? "Desabilitar plugin '\(plugin.name)'" : "Habilitar plugin '\(plugin.name)'"
+
+        try previewAndConfirm(
+            title: label,
+            preview: { log in
+                try PluginCommand(
+                    action: action,
+                    profileStore: self.profileStore,
+                    pluginStore: self.pluginStore,
+                    activePointer: self.activePointer,
+                    activeConf: self.activeConf,
+                    dryRun: true,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            },
+            apply: { log in
+                try PluginCommand(
+                    action: action,
+                    profileStore: self.profileStore,
+                    pluginStore: self.pluginStore,
+                    activePointer: self.activePointer,
+                    activeConf: self.activeConf,
+                    dryRun: false,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            }
+        )
     }
     
     private func handleSwitchTheme() throws {
         guard themes.indices.contains(selectedThemeIndex) else { return }
         let theme = themes[selectedThemeIndex]
-        
-        do {
-            try BlockCommand(
-                action: .themeSwitch(name: theme),
-                configDir: configDir,
-                validator: validator,
-                reloader: reloader
-            ).run(log: { _ in })
-            showSuccess("Tema '\(theme)' ativado com sucesso.")
-            try loadData()
-        } catch {
-            showError("Erro: \(error)")
-        }
+
+        try previewAndConfirm(
+            title: "Ativar tema '\(theme)'",
+            preview: { log in
+                try BlockCommand(
+                    action: .themeSwitch(name: theme),
+                    configDir: self.configDir,
+                    dryRun: true,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            },
+            apply: { log in
+                try BlockCommand(
+                    action: .themeSwitch(name: theme),
+                    configDir: self.configDir,
+                    dryRun: false,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            }
+        )
     }
     
     private func handleRestoreBackup() throws {
         guard backups.indices.contains(selectedBackupIndex) else { return }
         let manifest = backups[selectedBackupIndex]
-        
-        runInCookedMode {
-            print("\(ANSI.cyan)\(ANSI.bold)Visualizando Diff para restauração do backup '\(manifest.id)':\(ANSI.reset)\n")
-            // Dry run restores first
-            try BackupCommand(action: .restore(id: manifest.id), configDir: self.configDir, dryRun: true).run()
-            
-            print("\nDeseja aplicar esta restauração? (s/N): ", terminator: "")
-            fflush(stdout)
-            let response = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if response == "s" || response == "sim" {
-                try BackupCommand(action: .restore(id: manifest.id), configDir: self.configDir, dryRun: false).run()
-                print("\nBackup restaurado com sucesso.")
+
+        try previewAndConfirm(
+            title: "Restaurar backup '\(manifest.id)'",
+            preview: { log in
+                try BackupCommand(action: .restore(id: manifest.id), configDir: self.configDir, dryRun: true).run(log: log)
+            },
+            apply: { log in
+                try BackupCommand(action: .restore(id: manifest.id), configDir: self.configDir, dryRun: false).run(log: log)
             }
-        }
+        )
     }
-    
-    private func handleCreateProfile() throws {
-        runInCookedMode {
-            print("\(ANSI.cyan)\(ANSI.bold)Criar Novo Perfil:\(ANSI.reset)")
-            print("Digite o nome do novo perfil: ", terminator: "")
-            fflush(stdout)
-            guard let name = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
-                print("Nome inválido.")
-                return
+
+    private func handleSync() throws {
+        try previewAndConfirm(
+            title: "Sincronizar manifest",
+            preview: { log in
+                try Synchronizer(
+                    configDir: self.configDir,
+                    dryRun: true,
+                    fetcher: self.sourceFetcher,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            },
+            apply: { log in
+                try Synchronizer(
+                    configDir: self.configDir,
+                    dryRun: false,
+                    fetcher: self.sourceFetcher,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
             }
-            try CreateCommand(store: self.profileStore, rawName: name).run()
-            print("Perfil '\(name)' criado com sucesso.")
-        }
+        )
     }
-    
-    private func handleDeleteProfile() throws {
-        guard profiles.indices.contains(selectedProfileIndex) else { return }
-        let name = profiles[selectedProfileIndex]
-        let active = activePointer.get()
-        if name == active {
-            showError("Não é possível deletar o perfil ativo.")
-            return
-        }
-        
-        runInCookedMode {
-            print("\(ANSI.red)\(ANSI.bold)Deletar Perfil '\(name)':\(ANSI.reset)")
-            print("Tem certeza que deseja deletar este perfil? (s/N): ", terminator: "")
-            fflush(stdout)
-            let response = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if response == "s" || response == "sim" {
-                try DeleteCommand(store: self.profileStore, rawName: name, force: true, confirm: { _ in true }).run()
-                print("Perfil deletado.")
+
+    private func handleUpdate() throws {
+        try previewAndConfirm(
+            title: "Atualizar fontes",
+            preview: { log in
+                try UpdateCommand(
+                    configDir: self.configDir,
+                    dryRun: true,
+                    fetcher: self.sourceFetcher,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
+            },
+            apply: { log in
+                try UpdateCommand(
+                    configDir: self.configDir,
+                    dryRun: false,
+                    fetcher: self.sourceFetcher,
+                    validator: self.validator,
+                    reloader: self.reloader
+                ).run(log: log)
             }
-        }
+        )
     }
-    
-    private func handleCreateBackup() throws {
-        runInCookedMode {
-            print("\(ANSI.cyan)\(ANSI.bold)Criar Backup Snapshot:\(ANSI.reset)")
-            print("Digite uma descrição/descrição para o snapshot (opcional): ", terminator: "")
-            fflush(stdout)
-            let label = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let finalLabel = (label?.isEmpty ?? true) ? nil : label
-            try BackupCommand(action: .create(label: finalLabel), configDir: self.configDir).run()
-            print("Snapshot criado com sucesso.")
-        }
+
+    private func handleClean() throws {
+        try previewAndConfirm(
+            title: "Limpeza conservadora",
+            preview: { log in
+                try CleanCommand(configDir: self.configDir, artifacts: false, force: false, dryRun: true).run(log: log)
+            },
+            apply: { log in
+                try CleanCommand(configDir: self.configDir, artifacts: false, force: false, dryRun: false).run(log: log)
+            }
+        )
     }
     
     // MARK: - Rendering
     
     private func render() {
-        let size = Terminal.getSize()
+        let size = terminal.getSize()
         let cols = max(80, size.cols)
         let rows = max(24, size.rows)
         
@@ -432,7 +515,7 @@ public final class TUIEngine {
                 profileLines.append("  \(activeIndicator) \(p)")
             }
         }
-        let profilesBox = drawBox(title: "Perfis (C:Criar D:Deletar)", lines: profileLines, width: leftWidth, height: quadHeight, isFocused: selectedPanel == 0)
+        let profilesBox = drawBox(title: "Perfis", lines: profileLines, width: leftWidth, height: quadHeight, isFocused: selectedPanel == 0)
         
         // Quadrant 1: Plugins (Top-Right)
         var pluginLines: [String] = []
@@ -494,7 +577,7 @@ public final class TUIEngine {
         if backups.isEmpty {
             backupLines.append("  (nenhum backup encontrado)")
         }
-        let backupsBox = drawBox(title: "Backups (S:Snapshot)", lines: backupLines, width: rightWidth, height: quadHeight, isFocused: selectedPanel == 3)
+        let backupsBox = drawBox(title: "Backups", lines: backupLines, width: rightWidth, height: quadHeight, isFocused: selectedPanel == 3)
         
         // Merge top quadrants
         let topSection = mergeColumns(left: profilesBox, right: pluginsBox)
@@ -517,13 +600,13 @@ public final class TUIEngine {
         let instructions: String
         switch selectedPanel {
         case 0:
-            instructions = "[Setas/Tab] Navegar | [Enter] Ativar Perfil | [C] Criar Perfil | [D] Deletar Perfil | [Q] Sair"
+            instructions = "[Setas/Tab] Navegar | [Enter] Ativar Perfil | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
         case 1:
-            instructions = "[Setas/Tab] Navegar | [Enter] Alternar Plugin | [Q] Sair"
+            instructions = "[Setas/Tab] Navegar | [Enter] Alternar Plugin | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
         case 2:
-            instructions = "[Setas/Tab] Navegar | [Enter] Ativar Tema | [Q] Sair"
+            instructions = "[Setas/Tab] Navegar | [Enter] Ativar Tema | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
         case 3:
-            instructions = "[Setas/Tab] Navegar | [Enter] Restaurar Backup | [S] Criar Snapshot | [Q] Sair"
+            instructions = "[Setas/Tab] Navegar | [Enter] Restaurar Backup | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
         default:
             instructions = "[Setas/Tab] Navegar | [Enter] Confirmar | [Q] Sair"
         }
@@ -533,8 +616,11 @@ public final class TUIEngine {
         
         // Clear screen and draw frame
         let fullOutput = ANSI.clear + ANSI.home + frame.joined(separator: "\n")
-        print(fullOutput, terminator: "")
-        fflush(stdout)
+        emit(fullOutput)
+    }
+
+    private func emit(_ text: String) {
+        writeOutput(text)
     }
     
     private func drawBox(title: String, lines: [String], width: Int, height: Int, isFocused: Bool) -> [String] {

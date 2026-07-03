@@ -47,11 +47,10 @@ public enum KittymgrCLI {
             }
         }
 
-        // `backup` consumes `--dry-run` natively (it prints a diff). For other
-        // mutating commands the full apply-pipeline preview arrives in a later
-        // milestone; until then `--dry-run` must still guarantee no writes happen.
+        // Some legacy profile-owner commands do not yet have a unified-diff
+        // preview. Their dry-run path still guarantees no writes.
         let mutatingWithoutPreview: Set<String> = [
-            "uninstall", "create", "delete", "plugin", "ui", "pick",
+            "uninstall", "create", "delete", "ui", "pick",
         ]
         if dryRun && mutatingWithoutPreview.contains(command) {
             print("[dry-run] \(command): no changes made. Use `kittymgr backup ... --dry-run` to preview diffs.")
@@ -510,7 +509,8 @@ public enum KittymgrCLI {
                 pluginStore: PluginStore(root: dir.pluginsDir),
                 activePointer: ActivePointer(url: dir.activePointerFile),
                 activeConf: dir.activeConf,
-                profileOverride: profileOverride
+                profileOverride: profileOverride,
+                dryRun: dryRun
             ).run()
             return 0
         } catch {

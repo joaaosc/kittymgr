@@ -109,7 +109,12 @@ public struct BlockCommand {
         }
 
         let result = try transaction.apply(plan: plan, validationContent: validationContent, dryRun: dryRun, log: log)
-        if result.status == .applied { log(describe) }
+        if result.status == .applied {
+            if let snapshotID = result.snapshotID {
+                log("Snapshot pre-apply: \(snapshotID).")
+            }
+            log(describe)
+        }
     }
 
     // MARK: Listing

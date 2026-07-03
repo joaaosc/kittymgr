@@ -21,6 +21,8 @@ public struct PluginCommand {
     public let activeConf: URL
     /// Explicit `--profile`; when nil the active profile is used.
     public let profileOverride: String?
+    public let dryRun: Bool
+    public let validator: any ConfigValidating
     public let reloader: any Reloading
 
     public init(
@@ -30,6 +32,8 @@ public struct PluginCommand {
         activePointer: ActivePointer,
         activeConf: URL,
         profileOverride: String? = nil,
+        dryRun: Bool = false,
+        validator: any ConfigValidating = KittyConfigValidator(),
         reloader: any Reloading = KittenReloader()
     ) {
         self.action = action
@@ -38,6 +42,8 @@ public struct PluginCommand {
         self.activePointer = activePointer
         self.activeConf = activeConf
         self.profileOverride = profileOverride
+        self.dryRun = dryRun
+        self.validator = validator
         self.reloader = reloader
     }
 
@@ -101,17 +107,48 @@ public struct PluginCommand {
         }
 
         metadata.enabledPlugins = enabledPlugins
-        try profileStore.setMetadata(metadata, for: profile)
-        log("\(enable ? "Enabled" : "Disabled") plugin '\(plugin.value)' for '\(profile.value)'.")
 
-        let activator = Activator(
-            profileStore: profileStore,
-            pluginStore: pluginStore,
-            activePointer: activePointer,
-            activeConf: activeConf,
-            reloader: reloader
+        let configDir = ConfigDir(url: activeConf.deletingLastPathComponent().deletingLastPathComponent())
+        var plan = ApplyPlan(
+            writes: [
+                configDir.relativePath(of: profileStore.metadataURL(for: profile)): try encodedMetadata(metadata)
+            ]
         )
-        try activator.reactivateIfActive(profile, log: log)
+        var validationContent = ""
+        let shouldReload = activePointer.get() == profile.value
+
+        if shouldReload {
+            let composed = try ProfileComposer.compose(
+                profile: profile,
+                configDir: configDir,
+                profileStore: profileStore,
+                pluginStore: pluginStore,
+                enabledPluginsOverride: enabledPlugins
+            )
+            for (path, content) in composed.plan.writes {
+                plan.writes[path] = content
+            }
+            plan.deletes.append(contentsOf: composed.plan.deletes)
+            validationContent = composed.validationContent
+        }
+
+        let result = try ApplyTransaction(
+            snapshotStore: SnapshotStore(configDir: configDir),
+            validator: validator,
+            reloader: reloader
+        ).apply(
+            plan: plan,
+            validationContent: validationContent,
+            dryRun: dryRun,
+            reload: shouldReload,
+            log: log
+        )
+
+        guard result.status == .applied else { return }
+        if let snapshotID = result.snapshotID {
+            log("Snapshot pre-apply: \(snapshotID).")
+        }
+        log("\(enable ? "Enabled" : "Disabled") plugin '\(plugin.value)' for '\(profile.value)'.")
     }
 
     // MARK: - helpers
@@ -126,5 +163,12 @@ public struct PluginCommand {
             throw ProfileError.noActiveProfile
         }
         return try ProfileName(validating: active)
+    }
+
+    private func encodedMetadata(_ metadata: ProfileMetadata) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(metadata)
+        return String(decoding: data, as: UTF8.self)
     }
 }

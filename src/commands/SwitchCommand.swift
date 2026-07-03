@@ -84,7 +84,12 @@ public struct SwitchCommand {
         )
 
         guard result.status == .applied else { return }  // dry-run: nothing to record
-        try activePointer.set(name)
+        if activePointer.get() != name.value {
+            try activePointer.set(name)
+        }
+        if let snapshotID = result.snapshotID {
+            log("Snapshot pre-apply: \(snapshotID).")
+        }
         log("Switched to '\(name.value)'.")
     }
 }

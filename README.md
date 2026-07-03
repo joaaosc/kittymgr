@@ -18,7 +18,7 @@ clearly fenced `include` block and keeps all managed state in a dedicated
 - Declarative config: `kittymgr.toml` manifest (schema v2 — active selection, per-profile plugins, `keys`/`snippets` slugs, `[[sources]]`, and `[[themes]]`/`[[plugins]]`/`[[kittens]]`), `manifest init/show`, `source add/list/remove`.
 - Reconcile & pin: `sync` (disk ↔ manifest; installs declared artifacts; snapshot + rollback), `update` / `update --check`, `kittymgr/kittymgr.lock`.
 - Health & cleanup: `doctor` (environment + store integrity), `clean` (prune orphan caches/backups; `--artifacts --force` also prunes unused themes/plugins/kittens).
-- Interactive TUI: `ui` (alias `pick`). Version: `kittymgr --version`.
+- Interactive TUI: `ui` (alias `pick`) with preview + Enter/Esc confirmation. Version: `kittymgr --version`.
 
 ## Requirements
 
@@ -118,8 +118,8 @@ kittymgr doctor                                # Environment + managed-store hea
 kittymgr clean                                 # Remove orphan source caches and backup objects.
 kittymgr clean --artifacts --force             # Also prune themes/plugins/kittens nothing references.
 
-# Interactive terminal UI over all of the above.
-kittymgr ui
+# Interactive terminal UI for switch, plugin/theme toggles, restore, sync, update, and conservative clean.
+kittymgr ui                                  # Shows dry-run diff; Enter applies, Esc cancels.
 
 # Every command also accepts --help.
 kittymgr --help
@@ -129,6 +129,11 @@ The global `--dry-run` flag previews a change as a unified diff and writes
 nothing. Snapshots are kept under `kittymgr/backups/` as content-addressed objects
 plus one JSON manifest per snapshot; the manifest is published with an atomic
 rename, so an interrupted snapshot never leaves a partial entry in the history.
+
+`kittymgr ui` requires an interactive TTY. When stdin/stdout are piped, it exits
+with an error before rendering or writing; use the equivalent CLI command with
+`--dry-run` for CI or scripts. Profile creation/deletion, manifest editing, and
+`clean --artifacts` stay on the CLI.
 
 ## How it works
 

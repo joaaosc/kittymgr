@@ -23,9 +23,10 @@ enum ProfileComposer {
         configDir: ConfigDir,
         profileStore: ProfileStore,
         pluginStore: PluginStore,
-        blockChange: BlockChange? = nil
+        blockChange: BlockChange? = nil,
+        enabledPluginsOverride: [String]? = nil
     ) throws -> ComposedApply {
-        let enabledPlugins = profileStore.metadata(for: name).enabledPlugins
+        let enabledPlugins = enabledPluginsOverride ?? profileStore.metadata(for: name).enabledPlugins
         let profileIncludes = try IncludeBuilder.includes(
             profile: name,
             profileStore: profileStore,

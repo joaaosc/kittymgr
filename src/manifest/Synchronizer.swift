@@ -42,6 +42,7 @@ public struct Synchronizer {
             // every file exactly — a text-only capture would drop, then delete,
             // preexisting binary files under kittymgr/.
             let beforeSurface = try store.currentSurface()
+            let beforeManagedSurface = try managedFileSurface()
             let beforeText = beforeSurface.compactMapValues { String(data: $0, encoding: .utf8) }
             let existingDirs = managedDirectories()
             let diff: String
@@ -51,10 +52,12 @@ public struct Synchronizer {
             } catch {
                 // Even a mid-apply failure must leave the surface untouched.
                 try? store.restore(toSurface: beforeSurface)
+                try? restoreManagedFileSurface(beforeManagedSurface)
                 pruneNewEmptyDirectories(keeping: existingDirs)
                 throw error
             }
             try store.restore(toSurface: beforeSurface)
+            try restoreManagedFileSurface(beforeManagedSurface)
             // `restore` rewrites files but leaves directories the reconcile created;
             // drop any that are now empty so a preview leaves no phantom profile.
             pruneNewEmptyDirectories(keeping: existingDirs)
@@ -88,6 +91,7 @@ public struct Synchronizer {
             break
         }
 
+        log("Snapshot pre-sync: \(snapshot.id).")
         report(reloader.reload(), log: log)
         try lockSources(manifest, log: log)
         log("Synced from \(configDir.manifestFile.lastPathComponent).")
@@ -217,6 +221,27 @@ public struct Synchronizer {
         directories(under: configDir.managedDir).reduce(into: Set<String>()) { $0.insert($1.standardizedFileURL.path) }
     }
 
+    private func managedFileSurface() throws -> [String: Data] {
+        var result: [String: Data] = [:]
+        for file in files(under: configDir.managedDir) {
+            result[configDir.relativePath(of: file)] = try Data(contentsOf: file)
+        }
+        return result
+    }
+
+    private func restoreManagedFileSurface(_ surface: [String: Data]) throws {
+        let fm = FileManager.default
+        let wanted = Set(surface.keys)
+        for file in files(under: configDir.managedDir) where !wanted.contains(configDir.relativePath(of: file)) {
+            try fm.removeItem(at: file)
+        }
+        for (path, data) in surface {
+            let destination = configDir.url.appendingPathComponent(path)
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: destination, options: .atomic)
+        }
+    }
+
     /// Remove directories created during a previewed reconcile that are now empty.
     private func pruneNewEmptyDirectories(keeping existing: Set<String>) {
         let fm = FileManager.default
@@ -227,6 +252,16 @@ public struct Synchronizer {
                 try? fm.removeItem(at: url)
             }
         }
+    }
+
+    private func files(under root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
+        var result: [URL] = []
+        for case let url as URL in enumerator {
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            if !isDirectory { result.append(url) }
+        }
+        return result.sorted { $0.path < $1.path }
     }
 
     private func directories(under root: URL) -> [URL] {

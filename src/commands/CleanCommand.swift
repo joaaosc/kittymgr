@@ -49,6 +49,16 @@ public struct CleanCommand {
         for name in kittens { log("unreferenced kitten: \(name)") }
 
         if dryRun {
+            let diff = removalDiff(
+                orphanCaches: orphanCaches,
+                orphanObjects: orphanObjects,
+                themes: themes,
+                plugins: plugins,
+                kittens: kittens
+            )
+            if !diff.isEmpty {
+                log("[dry-run] clean removal preview:\n" + diff)
+            }
             log("[dry-run] clean would remove the above; nothing written.")
             return
         }
@@ -112,5 +122,65 @@ public struct CleanCommand {
         let plugins = ((try? pluginStore.list()) ?? []).map(\.name).filter { !keepPlugins.contains($0) }
         let kittens = kittenStore.list().map(\.name).filter { !keepKittens.contains($0) }
         return (themes, plugins, kittens)
+    }
+
+    private func removalDiff(
+        orphanCaches: [URL],
+        orphanObjects: [String],
+        themes: [String],
+        plugins: [String],
+        kittens: [String]
+    ) -> String {
+        var old: [String: String] = [:]
+        let fm = FileManager.default
+
+        for cache in orphanCaches {
+            let files = filesUnder(cache)
+            if files.isEmpty {
+                old[configDir.relativePath(of: cache) + "/"] = "<directory removed by clean>\n"
+            } else {
+                for file in files {
+                    old[configDir.relativePath(of: file)] = "<cache file removed by clean>\n"
+                }
+            }
+        }
+
+        for hash in orphanObjects {
+            let object = configDir.backupsDir
+                .appendingPathComponent("objects")
+                .appendingPathComponent(hash)
+            old[configDir.relativePath(of: object)] = "<orphan backup object removed by clean>\n"
+        }
+
+        let blockStore = BlockStore(managedDir: configDir.managedDir)
+        for name in themes {
+            let url = blockStore.themesDir.appendingPathComponent("\(name).conf")
+            if fm.fileExists(atPath: url.path) {
+                old[configDir.relativePath(of: url)] = "<unreferenced theme removed by clean>\n"
+            }
+        }
+        for name in plugins {
+            old[configDir.relativePath(of: configDir.pluginsDir.appendingPathComponent(name)) + "/"] = "<unreferenced plugin removed by clean>\n"
+        }
+        for name in kittens {
+            old[configDir.relativePath(of: configDir.kittensDir.appendingPathComponent(name)) + "/"] = "<unreferenced kitten removed by clean>\n"
+        }
+
+        return UnifiedDiff.diffStates(old: old, new: [:])
+    }
+
+    private func filesUnder(_ directory: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var result: [URL] = []
+        for case let url as URL in enumerator {
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            if !isDirectory { result.append(url) }
+        }
+        return result.sorted { $0.path < $1.path }
     }
 }

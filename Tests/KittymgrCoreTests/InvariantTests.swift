@@ -180,6 +180,26 @@ struct R2InvariantTests {
                 run: { dir in try self.switchCommand(dir).run(log: self.silent) }
             ),
             ManagedCase(
+                name: "tui switch",
+                allowedOutside: [],
+                setup: { dir in try self.seedProfile(dir) },
+                run: { dir in
+                    var keys: [TUIKey] = [.enter, .enter, .enter, .escape]
+                    let engine = TUIEngine(
+                        profileStore: ProfileStore(root: dir.profilesDir),
+                        pluginStore: PluginStore(root: dir.pluginsDir),
+                        activePointer: ActivePointer(url: dir.activePointerFile),
+                        activeConf: dir.activeConf,
+                        validator: StubValidator(.valid),
+                        reloader: R2Reloader(),
+                        terminal: ScriptedTerminal(),
+                        readKey: { keys.isEmpty ? .escape : keys.removeFirst() },
+                        write: { _ in }
+                    )
+                    try engine.start()
+                }
+            ),
+            ManagedCase(
                 name: "apply",
                 allowedOutside: [],
                 setup: { dir in try self.seedProfile(dir, active: true) },
@@ -340,6 +360,23 @@ struct R2InvariantTests {
                 allowedOutside: [],
                 setup: { dir in try self.seedProfile(dir, active: true); try self.seedTheme(dir) },
                 run: { dir in try self.blockCommand(.themeSwitch(name: "gruvbox"), dir: dir, dryRun: true).run(log: self.silent) }
+            ),
+            ManagedCase(
+                name: "plugin enable",
+                allowedOutside: [],
+                setup: { dir in try self.seedProfile(dir, active: true) },
+                run: { dir in
+                    try PluginCommand(
+                        action: .enable("theme-sample"),
+                        profileStore: ProfileStore(root: dir.profilesDir),
+                        pluginStore: PluginStore(root: dir.pluginsDir),
+                        activePointer: ActivePointer(url: dir.activePointerFile),
+                        activeConf: dir.activeConf,
+                        dryRun: true,
+                        validator: StubValidator(.valid),
+                        reloader: R2Reloader()
+                    ).run(log: self.silent)
+                }
             ),
             ManagedCase(
                 name: "key add",

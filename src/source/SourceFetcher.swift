@@ -102,6 +102,12 @@ public struct DefaultSourceFetcher: SourceFetching {
             cloneArgs += ["--", url, staging.path]
 
             let clone = try run("git", cloneArgs)
+            if clone.timedOut {
+                // A hung clone is a hard failure; the SHA fallback below is
+                // only for the fast `--branch`-rejects-a-commit error.
+                try? fileManager.removeItem(at: staging)
+                throw SourceError.fetchFailed(source: url, detail: clone.stderr)
+            }
             if clone.status != 0 {
                 // A commit SHA cannot be used with --branch; fall back to a full
                 // clone followed by an explicit checkout.
@@ -176,29 +182,34 @@ public struct DefaultSourceFetcher: SourceFetching {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func run(_ tool: String, _ arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [tool] + arguments
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
+    /// Wall-clock budget per git invocation; a legitimate remote clone can be
+    /// slow, but a hung one must not stall a run forever.
+    private static let toolTimeout: TimeInterval = 300
+
+    private func run(_ tool: String, _ arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String, timedOut: Bool) {
+        let result: ProcessOutput
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [tool] + arguments,
+                timeout: Self.toolTimeout
+            )
         } catch {
             throw SourceError.toolMissing(tool)
         }
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        if process.terminationStatus == 127 {
+        if !result.timedOut, result.status == 127 {
             throw SourceError.toolMissing(tool)
         }
+        var stderrText = String(decoding: result.stderr, as: UTF8.self)
+        if result.timedOut {
+            let note = "timed out after \(Int(Self.toolTimeout))s"
+            stderrText = stderrText.isEmpty ? note : stderrText + "\n(\(note))"
+        }
         return (
-            process.terminationStatus,
-            String(decoding: outData, as: UTF8.self),
-            String(decoding: errData, as: UTF8.self)
+            result.timedOut ? -1 : result.status,
+            String(decoding: result.stdout, as: UTF8.self),
+            stderrText,
+            result.timedOut
         )
     }
 }

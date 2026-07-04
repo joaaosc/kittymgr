@@ -251,7 +251,7 @@ public struct SnapshotStore {
                     continue
                 }
                 var isDir: ObjCBool = false
-                fm.fileExists(atPath: url.path, isDirectory: &isDir)
+                _ = fm.fileExists(atPath: url.path, isDirectory: &isDir)
                 if !isDir.boolValue { result.append(url) }
             }
         }

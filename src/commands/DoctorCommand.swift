@@ -46,14 +46,12 @@ public struct SystemEnvironmentProbe: EnvironmentProbing {
 
     public func remoteControlResponds() -> Bool {
         for tool in ["kitten", "kitty"] {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [tool, "@", "ls"]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            guard (try? process.run()) != nil else { continue }
-            process.waitUntilExit()
-            if process.terminationStatus == 0 { return true }
+            guard let result = try? ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [tool, "@", "ls"],
+                timeout: 10
+            ) else { continue }
+            if !result.timedOut, result.status == 0 { return true }
         }
         return false
     }

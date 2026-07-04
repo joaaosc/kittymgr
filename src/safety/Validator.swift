@@ -55,7 +55,15 @@ public enum SafetyError: Error, CustomStringConvertible, Equatable {
 /// `kitty --config <file> --debug-config`, which parses the config and exits.
 /// kitty-not-found or launch failure degrades to `.skipped` rather than blocking.
 public struct KittyConfigValidator: ConfigValidating {
-    public init() {}
+    private let timeout: TimeInterval
+    private let kittyPath: String
+
+    /// `timeout` and `kittyPath` are injectable for tests; production uses
+    /// the defaults (resolve `kitty` from PATH, 10s wall clock).
+    public init(timeout: TimeInterval = 10, kittyPath: String = "kitty") {
+        self.timeout = timeout
+        self.kittyPath = kittyPath
+    }
 
     public func validate(content: String) -> ValidationResult {
         let tempURL = FileManager.default.temporaryDirectory
@@ -67,27 +75,28 @@ public struct KittyConfigValidator: ConfigValidating {
         }
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["kitty", "--config", tempURL.path, "--debug-config"]
-        let errorPipe = Pipe()
-        let outputPipe = Pipe()
-        process.standardError = errorPipe
-        process.standardOutput = outputPipe
-
+        let result: ProcessOutput
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [kittyPath, "--config", tempURL.path, "--debug-config"],
+                timeout: timeout
+            )
         } catch {
             return .skipped(reason: "kitty not found")
         }
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
 
-        if process.terminationStatus == 127 {
+        // A kitty that exists but cannot finish validating is a hard failure,
+        // not a skip: callers must roll back rather than keep an unverified
+        // change.
+        if result.timedOut {
+            return .invalid(diagnostics: "kitty did not finish validating within \(timeout)s; treating the change as rejected")
+        }
+        if result.status == 127 {
             return .skipped(reason: "kitty not found")
         }
 
-        let diagnostics = String(decoding: errorData, as: UTF8.self)
+        let diagnostics = String(decoding: result.stderr, as: UTF8.self)
         let lowered = diagnostics.lowercased()
 
         // Older kitty versions lack `--debug-config`; don't treat our own

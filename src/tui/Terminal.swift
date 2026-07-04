@@ -75,8 +75,7 @@ public final class Terminal: TerminalControlling {
         raw.c_cc.16 = 1 // VMIN
         raw.c_cc.17 = 0 // VTIME
         #else
-        raw.c_cc[Int(VMIN)] = 1
-        raw.c_cc[Int(VTIME)] = 0
+        Self.setRawReadParameters(&raw)
         #endif
 
         guard tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0 else {
@@ -89,8 +88,19 @@ public final class Terminal: TerminalControlling {
         // Enter alternate screen buffer and hide cursor
         print("\u{001B}[?1049h", terminator: "")
         print("\u{001B}[?25l", terminator: "")
-        fflush(stdout)
+        TerminalIO.flushStdout()
     }
+
+    #if os(Linux)
+    /// Glibc imports `termios.c_cc` as a fixed-size tuple with no subscript;
+    /// set VMIN/VTIME through the raw bytes of the tuple instead.
+    private static func setRawReadParameters(_ raw: inout termios) {
+        withUnsafeMutableBytes(of: &raw.c_cc) { bytes in
+            bytes[Int(VMIN)] = 1
+            bytes[Int(VTIME)] = 0
+        }
+    }
+    #endif
 
     public func disableRawMode() {
         guard isRaw else { return }
@@ -98,7 +108,7 @@ public final class Terminal: TerminalControlling {
         // Exit alternate screen buffer and show cursor
         print("\u{001B}[?25h", terminator: "")
         print("\u{001B}[?1049l", terminator: "")
-        fflush(stdout)
+        TerminalIO.flushStdout()
 
         _ = tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios)
         isRaw = false

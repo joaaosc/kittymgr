@@ -89,7 +89,7 @@ public struct KittenStore {
         defer { try? fileManager.removeItem(at: staging) }
 
         var isSourceDir: ObjCBool = false
-        fileManager.fileExists(atPath: source.path, isDirectory: &isSourceDir)
+        _ = fileManager.fileExists(atPath: source.path, isDirectory: &isSourceDir)
 
         var entry: String?
         var checksum: String?

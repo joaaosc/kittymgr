@@ -104,7 +104,7 @@ struct R2InvariantTests {
                 continue
             }
             var isDirectory: ObjCBool = false
-            fm.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            _ = fm.fileExists(atPath: url.path, isDirectory: &isDirectory)
             guard !isDirectory.boolValue else { continue }
             output[dir.relativePath(of: url)] = try Data(contentsOf: url)
         }

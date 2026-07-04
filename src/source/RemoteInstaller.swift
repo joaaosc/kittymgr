@@ -68,7 +68,7 @@ public struct RemoteInstaller {
     private func resolveThemeFile(name: String, source: Source, fetched: FetchedSource) -> URL? {
         // A local file or a single downloaded file *is* the theme.
         var isDirectory: ObjCBool = false
-        FileManager.default.fileExists(atPath: fetched.root.path, isDirectory: &isDirectory)
+        _ = FileManager.default.fileExists(atPath: fetched.root.path, isDirectory: &isDirectory)
         if !isDirectory.boolValue { return fetched.root }
         if case .url = source.kind {
             return (try? FileManager.default.contentsOfDirectory(at: fetched.root, includingPropertiesForKeys: nil))?

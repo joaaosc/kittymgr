@@ -50,7 +50,7 @@ public final class TUIEngine {
         readKey: @escaping () throws -> TUIKey = { KeyReader.readKey() },
         write: @escaping (String) -> Void = {
             print($0, terminator: "")
-            fflush(stdout)
+            TerminalIO.flushStdout()
         }
     ) {
         self.profileStore = profileStore

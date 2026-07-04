@@ -1,5 +1,7 @@
 # kittymgr
 
+[![CI](https://github.com/joaaosc/garfield/actions/workflows/ci.yml/badge.svg)](https://github.com/joaaosc/garfield/actions/workflows/ci.yml)
+
 A non-invasive configuration manager for the [kitty](https://sw.kovidgoyal.net/kitty/)
 terminal. kittymgr never rewrites a user's `kitty.conf`; it attaches a single,
 clearly fenced `include` block and keeps all managed state in a dedicated
@@ -22,16 +24,18 @@ clearly fenced `include` block and keeps all managed state in a dedicated
 
 ## Requirements
 
-- A Swift 6 toolchain (SwiftPM). macOS 13+.
+- A Swift 6.1+ toolchain (SwiftPM). macOS 13+ or Linux (glibc).
 - Optional at runtime: `kitty` (config validation + live reload) and `git` (git
   sources); both degrade gracefully when absent — run `kittymgr doctor` to see what
   is available.
 
 Portability: the domain logic is Foundation-only, and SHA-256 uses CryptoKit on
-Apple platforms and [swift-crypto](https://github.com/apple/swift-crypto) on Linux,
-so the package is intended to build on macOS and Linux. The macOS build and tests
-are the ones exercised in this repo; verify a Linux build with
-`docker run --rm -v "$PWD":/app -w /app swift:6.0 bash -lc "swift build && swift test"`.
+Apple platforms and [swift-crypto](https://github.com/apple/swift-crypto) on Linux.
+Both platforms are exercised in CI on every push and pull request — build, the
+full test suite, and the end-to-end smoke run on `macos-15` and in the official
+`swift:6.1` container (swift-crypto 4.5 requires a Swift 6.1 toolchain, so
+`swift:6.0` is not sufficient on Linux). See [Tests](#tests) for the local
+Linux verification command.
 
 ## Quickstart
 
@@ -259,5 +263,16 @@ The resolved path is printed on every run for confirmation.
 ## Tests
 
 ```sh
-swift test
+swift test          # full suite (Swift Testing)
+scripts/smoke.sh    # end-to-end smoke against a throwaway KITTY_CONFIG_DIRECTORY
 ```
+
+Linux, reproduced locally the same way CI runs it (build, full suite, and smoke):
+
+```sh
+docker run --rm -v "$PWD":/app -w /app swift:6.1 bash -lc \
+  'swift build --build-path .build-linux && swift test --build-path .build-linux \
+   && KITTYMGR_BIN=.build-linux/debug/kittymgr scripts/smoke.sh'
+```
+
+The separate `--build-path` keeps Linux build artifacts out of the host `.build/`.

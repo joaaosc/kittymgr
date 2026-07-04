@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: swiftpm-macos-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-macos-
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Smoke
+        run: scripts/smoke.sh
+
+  linux:
+    name: Linux (swift:6.1)
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: swiftpm-linux-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-linux-
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Smoke
+        run: scripts/smoke.sh

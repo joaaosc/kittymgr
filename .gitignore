@@ -1,5 +1,6 @@
 # Swift / SwiftPM build artifacts
 /.build/
+/.build-linux/
 /build/
 /DerivedData/
 *.xcodeproj/xcuserdata/

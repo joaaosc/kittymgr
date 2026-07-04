@@ -41,34 +41,35 @@ public struct KittenReloader: Reloading {
         case failed(reason: String)
     }
 
-    private func run(tool: String) -> Attempt {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [tool, "@", "load-config"]
-        let errorPipe = Pipe()
-        let outputPipe = Pipe()
-        process.standardError = errorPipe
-        process.standardOutput = outputPipe
+    /// Wall-clock budget for `@ load-config`; a healthy kitty answers fast.
+    private static let timeout: TimeInterval = 10
 
+    private func run(tool: String) -> Attempt {
+        let result: ProcessOutput
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [tool, "@", "load-config"],
+                timeout: Self.timeout
+            )
         } catch {
             return .notFound
         }
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        if result.timedOut {
+            return .failed(reason: "kitty remote control did not respond within \(Self.timeout)s.")
+        }
 
-        switch process.terminationStatus {
+        switch result.status {
         case 0:
             return .reloaded
         case 127:
             // `env` could not locate the tool.
             return .notFound
         default:
-            let message = String(decoding: errorData, as: UTF8.self)
+            let message = String(decoding: result.stderr, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return .failed(reason: message.isEmpty
-                ? "remote control unavailable (exit \(process.terminationStatus))."
+                ? "remote control unavailable (exit \(result.status))."
                 : message)
         }
     }

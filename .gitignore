@@ -3,6 +3,7 @@
 /.build-linux/
 /build/
 /DerivedData/
+/dist/
 *.xcodeproj/xcuserdata/
 .swiftpm/
 

@@ -13,7 +13,20 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-TMP_KITTY="$(mktemp -d)"
+if [ -n "${KITTYMGR_SMOKE_ROOT:-}" ]; then
+  case "$KITTYMGR_SMOKE_ROOT" in
+    ""|"/"|".")
+      echo "error: unsafe KITTYMGR_SMOKE_ROOT '$KITTYMGR_SMOKE_ROOT'" >&2
+      exit 1
+      ;;
+  esac
+  mkdir -p "$KITTYMGR_SMOKE_ROOT"
+  TMP_KITTY="$KITTYMGR_SMOKE_ROOT/kitty-config"
+  rm -rf "$TMP_KITTY"
+  mkdir -p "$TMP_KITTY"
+else
+  TMP_KITTY="$(mktemp -d)"
+fi
 export KITTY_CONFIG_DIRECTORY="$TMP_KITTY"
 trap 'rm -rf "$TMP_KITTY"' EXIT
 

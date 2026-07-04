@@ -60,6 +60,19 @@ install -m 0755 .build/release/kittymgr /usr/local/bin/kittymgr   # put it on PA
 kittymgr --version
 ```
 
+Local release packaging is staged in small milestones. The implemented dry-run
+path builds only the macOS universal artifact and writes only under `dist/`:
+
+```sh
+./scripts/release.sh --dry-run
+(cd dist && shasum -a 256 -c SHA256SUMS)
+tar tzf dist/kittymgr-*-macos-universal.tar.gz
+```
+
+This local dry-run does not create tags, push commits, publish GitHub Releases,
+or build Linux artifacts. Linux x86_64 packaging, tag-triggered upload, and the
+Linux aarch64 decision are separate follow-up milestones.
+
 ## Usage
 
 ```sh
@@ -265,6 +278,7 @@ The resolved path is printed on every run for confirmation.
 ```sh
 swift test          # full suite (Swift Testing)
 scripts/smoke.sh    # end-to-end smoke against a throwaway KITTY_CONFIG_DIRECTORY
+./scripts/release.sh --dry-run   # macOS universal package + checksum + packaged smoke
 ```
 
 Linux, reproduced locally the same way CI runs it (build, full suite, and smoke):

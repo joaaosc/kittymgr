@@ -5,6 +5,18 @@ public enum KittymgrCLI {
     /// Runs the CLI with arguments that exclude the executable path.
     /// Returns a process exit code.
     public static func run(_ arguments: [String]) -> Int32 {
+        run(
+            arguments,
+            isInteractive: { Terminal().isInteractive },
+            launchUI: { configDir in try UICommand(configDir: configDir).run() }
+        )
+    }
+
+    static func run(
+        _ arguments: [String],
+        isInteractive: () -> Bool,
+        launchUI: (ConfigDir) throws -> Void
+    ) -> Int32 {
         // `--dry-run` is a cross-cutting global flag: strip it before dispatch so
         // every command sees a clean argument list and inherits preview behavior.
         var args = arguments
@@ -25,11 +37,20 @@ public enum KittymgrCLI {
             return 0
         }
 
-        guard let command = args.first else {
-            printUsage()
-            return 2
+        let command: String
+        let options: [String]
+        if let first = args.first {
+            command = first
+            options = Array(args.dropFirst())
+        } else {
+            guard isInteractive() else {
+                printError("no command provided; run `kittymgr` from an interactive TTY to open the UI, or pass a command")
+                printUsage()
+                return 2
+            }
+            command = "ui"
+            options = []
         }
-        let options = Array(args.dropFirst())
         let positionals = options.filter { !$0.hasPrefix("-") }
         let flags = options.filter { $0.hasPrefix("-") }
 
@@ -156,7 +177,7 @@ public enum KittymgrCLI {
                 try ApplyCommand(configDir: ConfigDir.resolve(), dryRun: dryRun).run()
                 return 0
             case "ui", "pick":
-                try UICommand(configDir: ConfigDir.resolve()).run()
+                try launchUI(ConfigDir.resolve())
                 return 0
             case "help", "-h", "--help":
                 printUsage()

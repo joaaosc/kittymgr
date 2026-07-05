@@ -6,6 +6,8 @@ import Testing
 /// the process was launched from. The one intentional exception: relative paths
 /// the user types (`--from <path>`, `snippet add --from`) resolve against the
 /// cwd, like any CLI argument.
+/// These tests are serialized because the CLI reads process-wide cwd and env.
+@Suite(.serialized)
 struct CLIWorkingDirectoryTests {
     private let fm = FileManager.default
 
@@ -17,8 +19,7 @@ struct CLIWorkingDirectoryTests {
         try fm.createDirectory(at: unrelatedCwd, withIntermediateDirectories: true)
 
         // Point the CLI at the config dir and run it from an unrelated cwd, as a
-        // user would from any shell location. No other test reads this variable
-        // through the real environment, so the mutation cannot race the suite.
+        // user would from any shell location.
         let previousEnv = ProcessInfo.processInfo.environment["KITTY_CONFIG_DIRECTORY"]
         setenv("KITTY_CONFIG_DIRECTORY", configDir.path, 1)
         let previousCwd = fm.currentDirectoryPath
@@ -54,6 +55,71 @@ struct CLIWorkingDirectoryTests {
         #expect(try fm.contentsOfDirectory(atPath: unrelatedCwd.path).isEmpty)
         #expect(URL(fileURLWithPath: fm.currentDirectoryPath).resolvingSymlinksInPath().path
             == unrelatedCwd.resolvingSymlinksInPath().path)
+    }
+
+    @Test func noArgumentsNonInteractiveExitsTwoWithoutLaunchingUI() throws {
+        let configDir = fm.temporaryDirectory.appendingPathComponent("kittymgr-noargs-nontty-\(UUID().uuidString)")
+        try fm.createDirectory(at: configDir.appendingPathComponent("managed"), withIntermediateDirectories: true)
+
+        var launched = false
+        let status = withKittyConfigDirectory(configDir) {
+            KittymgrCLI.run(
+                [],
+                isInteractive: { false },
+                launchUI: { _ in launched = true }
+            )
+        }
+
+        #expect(status == 2)
+        #expect(launched == false)
+        #expect(fm.fileExists(atPath: configDir.appendingPathComponent("kittymgr").path) == false)
+    }
+
+    @Test func noArgumentsInteractiveLaunchesUIEntrypoint() throws {
+        let configDir = fm.temporaryDirectory.appendingPathComponent("kittymgr-noargs-tty-\(UUID().uuidString)")
+        var launchedConfigDir: ConfigDir?
+
+        let status = withKittyConfigDirectory(configDir) {
+            KittymgrCLI.run(
+                [],
+                isInteractive: { true },
+                launchUI: { dir in launchedConfigDir = dir }
+            )
+        }
+
+        #expect(status == 0)
+        #expect(launchedConfigDir == ConfigDir(url: configDir.standardizedFileURL))
+        #expect(fm.fileExists(atPath: configDir.path) == false)
+    }
+
+    @Test func noArgumentsDryRunInteractiveUsesUIDryRunShortcut() throws {
+        let configDir = fm.temporaryDirectory.appendingPathComponent("kittymgr-noargs-dryrun-\(UUID().uuidString)")
+        var launched = false
+
+        let status = withKittyConfigDirectory(configDir) {
+            KittymgrCLI.run(
+                ["--dry-run"],
+                isInteractive: { true },
+                launchUI: { _ in launched = true }
+            )
+        }
+
+        #expect(status == 0)
+        #expect(launched == false)
+        #expect(fm.fileExists(atPath: configDir.path) == false)
+    }
+
+    private func withKittyConfigDirectory<T>(_ configDir: URL, _ body: () throws -> T) rethrows -> T {
+        let previousEnv = ProcessInfo.processInfo.environment["KITTY_CONFIG_DIRECTORY"]
+        setenv("KITTY_CONFIG_DIRECTORY", configDir.path, 1)
+        defer {
+            if let previousEnv {
+                setenv("KITTY_CONFIG_DIRECTORY", previousEnv, 1)
+            } else {
+                unsetenv("KITTY_CONFIG_DIRECTORY")
+            }
+        }
+        return try body()
     }
 }
 

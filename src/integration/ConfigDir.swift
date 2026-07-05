@@ -22,11 +22,13 @@ public struct ConfigDir: Sendable, Equatable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> ConfigDir {
-        if let explicit = nonEmpty(environment["KITTY_CONFIG_DIRECTORY"]) {
-            return ConfigDir(url: expand(explicit, home: home))
+        if let explicit = nonEmpty(environment["KITTY_CONFIG_DIRECTORY"]),
+           let url = expand(explicit, home: home) {
+            return ConfigDir(url: url)
         }
-        if let xdg = nonEmpty(environment["XDG_CONFIG_HOME"]) {
-            return ConfigDir(url: expand(xdg, home: home).appendingPathComponent("kitty"))
+        if let xdg = nonEmpty(environment["XDG_CONFIG_HOME"]),
+           let url = expand(xdg, home: home) {
+            return ConfigDir(url: url.appendingPathComponent("kitty"))
         }
         return ConfigDir(url: home.appendingPathComponent(".config").appendingPathComponent("kitty"))
     }
@@ -156,12 +158,17 @@ public struct ConfigDir: Sendable, Equatable {
         return value
     }
 
-    private static func expand(_ path: String, home: URL) -> URL {
-        if path == "~" { return home }
+    /// Absolute paths pass through; `~` and `~/sub` expand against home. Anything
+    /// else (a relative path) returns nil so resolution falls through to the next
+    /// candidate — matching the XDG base-dir spec, and guaranteeing the resolved
+    /// directory never depends on the process's current working directory.
+    private static func expand(_ path: String, home: URL) -> URL? {
+        if path == "~" { return home.standardizedFileURL }
         if path.hasPrefix("~/") {
-            return home.appendingPathComponent(String(path.dropFirst(2)))
+            return home.appendingPathComponent(String(path.dropFirst(2))).standardizedFileURL
         }
-        return URL(fileURLWithPath: path)
+        guard path.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: path).standardizedFileURL
     }
 
     private static func isDirectory(_ url: URL, fileManager fm: FileManager) -> Bool {

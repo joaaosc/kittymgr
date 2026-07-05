@@ -135,12 +135,25 @@ enum ProcessRunner {
     /// can lag behind reality (its exit notification travels through a
     /// descriptor a descendant may hold open), so a clean exit status is
     /// peeked straight from the kernel instead; -1 only when the child is
-    /// genuinely unfinished or was killed.
+    /// genuinely unfinished or was killed. One race needs explicit handling:
+    /// corelibs can reap the zombie between the `isRunning` check and the
+    /// peek, leaving a window where the peek says ECHILD while `isRunning` is
+    /// still stale-true — returning -1 there misreports a finished child
+    /// (observed as the validator treating a missing kitty as `.valid`). The
+    /// reap having happened means the `isRunning` flip is imminent, so that
+    /// one case gets a bounded wait for `terminationStatus`.
     private static func exitStatus(of process: Process) -> Int32 {
         if !process.isRunning { return process.terminationStatus }
         #if os(Linux)
-        if let status = ProcessWait.peekedCleanExitStatus(pid: process.processIdentifier) {
+        switch ProcessWait.peekExit(pid: process.processIdentifier) {
+        case let .exited(status):
             return status
+        case .reaped:
+            let deadline = Date(timeIntervalSinceNow: 2)
+            while process.isRunning, Date() < deadline { usleep(1_000) }
+            if !process.isRunning { return process.terminationStatus }
+        case .running, .signaled:
+            break
         }
         #endif
         return -1
@@ -150,17 +163,29 @@ enum ProcessRunner {
     /// (an all-at-once read-to-EOF would return nothing until EOF). A dedicated
     /// thread, not a global-queue work item: dispatch can defer work items for
     /// seconds when every core is busy, and the drains must start immediately
-    /// or a fast child's output is lost. The handle is never closed here:
-    /// closing it while this thread blocks in `read` is a corelibs crash, and
-    /// leaving it open merely holds the descriptor until the last writer exits.
+    /// or a fast child's output is lost. Raw `read(2)` instead of
+    /// `availableData`: on Linux, corelibs-foundation turns a read failure —
+    /// including a plain EINTR — into a fatalError, so EINTR is retried here.
+    /// The handle is never closed here (and is kept captured so the
+    /// descriptor stays valid for the thread's lifetime): closing it while
+    /// this thread blocks in `read` is a corelibs crash, and leaving it open
+    /// merely holds the descriptor until the last writer exits.
     private static func drain(_ handle: FileHandle, into buffer: LockedBuffer, group: DispatchGroup) {
         group.enter()
         let thread = Thread {
             defer { group.leave() }
+            var chunk = [UInt8](repeating: 0, count: 65536)
             while true {
-                let chunk = handle.availableData
-                if chunk.isEmpty { return }
-                buffer.append(chunk)
+                let count = chunk.withUnsafeMutableBytes { raw in
+                    read(handle.fileDescriptor, raw.baseAddress, raw.count)
+                }
+                if count > 0 {
+                    buffer.append(Data(chunk[0..<count]))
+                } else if count == 0 {
+                    return
+                } else if errno != EINTR {
+                    return
+                }
             }
         }
         thread.start()

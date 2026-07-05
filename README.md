@@ -61,17 +61,21 @@ kittymgr --version
 ```
 
 Local release packaging is staged in small milestones. The implemented dry-run
-path builds only the macOS universal artifact and writes only under `dist/`:
+paths build the macOS universal artifact and, via Docker, the Linux x86_64
+artifact; both write only under `dist/`:
 
 ```sh
-./scripts/release.sh --dry-run
-(cd dist && shasum -a 256 -c SHA256SUMS)
-tar tzf dist/kittymgr-*-macos-universal.tar.gz
+./scripts/release.sh --dry-run            # macOS universal (arm64 + x86_64)
+./scripts/release.sh --dry-run --linux    # Linux x86_64 inside a disposable swift:6.1 container
+(cd dist && shasum -a 256 -c SHA256SUMS)  # covers every artifact present in dist/
 ```
 
-This local dry-run does not create tags, push commits, publish GitHub Releases,
-or build Linux artifacts. Linux x86_64 packaging, tag-triggered upload, and the
-Linux aarch64 decision are separate follow-up milestones.
+The Linux mode requires a running Docker Engine: build, tests, packaging, and
+the packaged smoke all run inside `docker run --rm` with the repository mounted
+at `/workspace`, and the binary links the Swift runtime statically
+(`-Xswiftc -static-stdlib`). These local dry-runs do not create tags, push
+commits, or publish GitHub Releases. Tag-triggered upload and the Linux aarch64
+decision are separate follow-up milestones.
 
 ## Usage
 

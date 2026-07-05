@@ -22,15 +22,24 @@ public extension SourceFetching {
     func resolveLatest(_ source: Source) throws -> String? { nil }
 }
 
-/// Default fetcher: git repositories via the `git` binary, URLs via a synchronous
-/// download, local paths in place. Never executes fetched content.
+/// Default fetcher: git repositories via the `git` binary, URLs via a bounded
+/// synchronous download (scheme allowlist, timeouts, size cap — see
+/// `URLDownloader`), local paths in place. Never executes fetched content.
 public struct DefaultSourceFetcher: SourceFetching {
     public let cacheDir: URL
     private let fileManager: FileManager
+    private let download: (URL) throws -> Data
 
-    public init(cacheDir: URL, fileManager: FileManager = .default) {
+    /// `download` is injectable so the URL path can be tested without network;
+    /// the default enforces the release download policy.
+    public init(
+        cacheDir: URL,
+        fileManager: FileManager = .default,
+        download: @escaping (URL) throws -> Data = { try URLDownloader().download($0) }
+    ) {
         self.cacheDir = cacheDir
         self.fileManager = fileManager
+        self.download = download
     }
 
     public func fetch(_ source: Source) throws -> FetchedSource {
@@ -144,7 +153,9 @@ public struct DefaultSourceFetcher: SourceFetching {
         }
         let data: Data
         do {
-            data = try Data(contentsOf: url)
+            data = try download(url)
+        } catch let error as URLDownloadError {
+            throw SourceError.fetchFailed(source: urlString, detail: error.description)
         } catch {
             throw SourceError.fetchFailed(source: urlString, detail: "\(error)")
         }

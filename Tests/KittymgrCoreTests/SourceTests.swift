@@ -36,19 +36,45 @@ struct SourceTests {
     }
 
     @Test func fetchURLDownloadsAndChecksums() throws {
-        // A file:// URL exercises the download path deterministically, no network.
-        let sourceFile = tempDir()
-        try fm.createDirectory(at: sourceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try "background #282828\n".write(to: sourceFile, atomically: true, encoding: .utf8)
-        let urlString = URL(fileURLWithPath: sourceFile.path).absoluteString
-
+        // A stubbed downloader exercises the write/checksum path deterministically,
+        // no network.
         let cache = tempDir()
-        let result = try DefaultSourceFetcher(cacheDir: cache).fetch(Source(name: "u", kind: .url(urlString)))
+        let fetcher = DefaultSourceFetcher(cacheDir: cache) { _ in
+            Data("background #282828\n".utf8)
+        }
+        let result = try fetcher.fetch(Source(name: "u", kind: .url("https://example.com/theme.conf")))
 
         #expect(result.checksum != nil)
         let downloaded = try fm.contentsOfDirectory(at: result.root, includingPropertiesForKeys: nil)
         #expect(downloaded.count == 1)
+        #expect(downloaded[0].lastPathComponent == "theme.conf")
         #expect((try? String(contentsOf: downloaded[0], encoding: .utf8)) == "background #282828\n")
+    }
+
+    @Test func fetchURLRejectsNonHTTPSchemes() {
+        // The default downloader refuses non-http(s) schemes before any I/O, so
+        // this runs the real policy with no network.
+        let fetcher = DefaultSourceFetcher(cacheDir: tempDir())
+        for bad in ["file:///etc/passwd", "ftp://host/x", "data:text/plain,hi"] {
+            do {
+                _ = try fetcher.fetch(Source(name: "x", kind: .url(bad)))
+                Issue.record("expected fetch of \(bad) to throw")
+            } catch {
+                #expect("\(error)".contains("scheme"), "unexpected error for \(bad): \(error)")
+            }
+        }
+    }
+
+    @Test func fetchURLSurfacesDownloaderDetail() {
+        let fetcher = DefaultSourceFetcher(cacheDir: tempDir()) { _ in
+            throw URLDownloadError.timeout(seconds: 120)
+        }
+        do {
+            _ = try fetcher.fetch(Source(name: "x", kind: .url("https://example.com/slow")))
+            Issue.record("expected the downloader error to propagate")
+        } catch {
+            #expect("\(error)".contains("timed out after 120s"))
+        }
     }
 
     // MARK: - git (requires the `git` binary; skips if absent)

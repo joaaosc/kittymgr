@@ -1,0 +1,117 @@
+name: Release
+
+# Tag-triggered release: every artifact is built, checksummed, and smoke-tested
+# by scripts/release.sh (the same paths exercised locally as dry-runs) before
+# anything is published. The GitHub Release is created only after both
+# artifact jobs and their checksum verifications succeed.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Version gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must be vX.Y.Z and match Kittymgr.version
+        run: |
+          tag="$GITHUB_REF_NAME"
+          echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::tag '$tag' is not of the form vX.Y.Z"; exit 1; }
+          version="$(sed -nE 's/^[[:space:]]*public static let version = "([^"]+)".*/\1/p' src/Version.swift)"
+          [ -n "$version" ] \
+            || { echo "::error::could not read Kittymgr.version from src/Version.swift"; exit 1; }
+          [ "$tag" = "v$version" ] \
+            || { echo "::error::tag '$tag' does not match Kittymgr.version '$version'"; exit 1; }
+
+  macos:
+    name: macOS universal artifact
+    needs: gate
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: swiftpm-macos-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-macos-
+      - name: Test
+        run: swift test
+      - name: Build, package, checksum, smoke
+        run: ./scripts/release.sh --dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: |
+            dist/kittymgr-*-macos-universal.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64 artifact
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      # Build, full test suite, packaging, and the packaged smoke all run
+      # inside a disposable swift:6.1 container (docker run --rm), exactly as
+      # in the local dry-run.
+      - name: Build, test, package, checksum, smoke (swift:6.1 container)
+        run: ./scripts/release.sh --dry-run --linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: |
+            dist/kittymgr-*-linux-x86_64.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-universal
+          path: staging/macos
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: staging/linux
+      # Each build job shipped the SHA256SUMS it wrote next to its artifact;
+      # re-verifying here proves the bytes survived the artifact round-trip.
+      - name: Verify checksums from the build jobs
+        run: |
+          (cd staging/macos && shasum -a 256 -c SHA256SUMS)
+          (cd staging/linux && shasum -a 256 -c SHA256SUMS)
+      - name: Assemble release files with a combined SHA256SUMS
+        run: |
+          mkdir -p release
+          mv staging/macos/kittymgr-*-macos-universal.tar.gz release/
+          mv staging/linux/kittymgr-*-linux-x86_64.tar.gz release/
+          cd release
+          shasum -a 256 kittymgr-*.tar.gz > SHA256SUMS
+          shasum -a 256 -c SHA256SUMS
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "kittymgr $version" \
+            --generate-notes \
+            release/kittymgr-*.tar.gz release/SHA256SUMS

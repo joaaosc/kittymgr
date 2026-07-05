@@ -4,20 +4,24 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/release.sh --dry-run            Build the macOS universal artifact into dist/
-  scripts/release.sh --dry-run --linux    Build the Linux x86_64 artifact into dist/
-                                          inside a disposable Docker container (swift:6.1)
+  scripts/release.sh --dry-run                  Build the macOS universal artifact into dist/
+  scripts/release.sh --dry-run --linux          Build the Linux x86_64 artifact into dist/
+                                                inside a disposable Docker container (swift:6.1)
+  scripts/release.sh --dry-run --linux-aarch64  Build the Linux aarch64 artifact the same way
+                                                (native on arm64 Docker hosts, e.g. Apple Silicon)
 
 Artifacts written to dist/:
   kittymgr-<version>-macos-universal.tar.gz    (--dry-run)
   kittymgr-<version>-linux-x86_64.tar.gz       (--dry-run --linux)
+  kittymgr-<version>-linux-aarch64.tar.gz      (--dry-run --linux-aarch64)
   SHA256SUMS    covers every kittymgr-<version>-*.tar.gz present in dist/
 
 Linux mode requirements:
   - Docker Engine already running (this script does not start or install Docker)
-  - Image swift:6.1 for linux/amd64 (pulled automatically on first use)
+  - Image swift:6.1 for the requested platform (pulled automatically on first use)
   Build, tests, packaging, and the smoke test all run inside `docker run --rm`
-  with the repository mounted at /workspace; build state stays under dist/.work.
+  with the repository mounted read-only at /workspace; dist/ is the only
+  writable bind, and all build state stays under dist/.work.
 
 This script does not create tags, push, publish releases, or write outside dist/.
 
@@ -39,6 +43,9 @@ require_tool() {
 DRY_RUN=0
 LINUX=0
 CONTAINER_STAGE=0
+# The container stage learns its architecture through this variable, exported
+# into the container by linux_release; on the host the flags below set it.
+LINUX_ARCH="${KITTYMGR_LINUX_ARCH:-x86_64}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run)
@@ -46,6 +53,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --linux)
       LINUX=1
+      LINUX_ARCH="x86_64"
+      ;;
+    --linux-aarch64)
+      LINUX=1
+      LINUX_ARCH="aarch64"
       ;;
     --linux-container-stage)
       CONTAINER_STAGE=1
@@ -76,12 +88,24 @@ DIST="$REPO_ROOT/dist"
 WORK="$DIST/.work"
 CHECKSUMS="$DIST/SHA256SUMS"
 MACOS_ARTIFACT="kittymgr-$VERSION-macos-universal.tar.gz"
-LINUX_ARTIFACT="kittymgr-$VERSION-linux-x86_64.tar.gz"
 DOCKER_IMAGE="swift:6.1"
-DOCKER_PLATFORM="linux/amd64"
+case "$LINUX_ARCH" in
+  x86_64)
+    DOCKER_PLATFORM="linux/amd64"
+    ELF_MACHINE="X86-64"
+    ;;
+  aarch64)
+    DOCKER_PLATFORM="linux/arm64"
+    ELF_MACHINE="AArch64"
+    ;;
+  *)
+    fail "unsupported Linux architecture: $LINUX_ARCH"
+    ;;
+esac
+LINUX_ARTIFACT="kittymgr-$VERSION-linux-$LINUX_ARCH.tar.gz"
 
 # SHA256SUMS always covers every current-version artifact present in dist/, so
-# after running both modes it lists macOS universal and Linux x86_64 together.
+# after running all modes it lists macOS universal and every Linux arch together.
 write_checksums() {
   (
     cd "$DIST"
@@ -202,10 +226,14 @@ linux_release() {
   echo "== docker preflight ($DOCKER_IMAGE, $DOCKER_PLATFORM) =="
   docker run --rm --platform "$DOCKER_PLATFORM" "$DOCKER_IMAGE" swift --version
 
-  echo "== linux x86_64 build + test + package + smoke in disposable container =="
+  # The repository is mounted read-only; dist/ is the only writable bind, so
+  # the container can prove at runtime that nothing outside dist/ is touched.
+  echo "== linux $LINUX_ARCH build + test + package + smoke in disposable container =="
   docker run --rm \
     --platform "$DOCKER_PLATFORM" \
-    --volume "$REPO_ROOT:/workspace" \
+    --volume "$REPO_ROOT:/workspace:ro" \
+    --volume "$DIST:/workspace/dist" \
+    --env KITTYMGR_LINUX_ARCH="$LINUX_ARCH" \
     --workdir /workspace \
     "$DOCKER_IMAGE" \
     bash scripts/release.sh --linux-container-stage
@@ -222,12 +250,14 @@ linux_release() {
   echo "$CHECKSUMS"
 }
 
-# Runs inside the swift:6.1 linux/amd64 container with the repo at /workspace.
+# Runs inside the swift:6.1 Linux container for $LINUX_ARCH with the repo
+# mounted read-only at /workspace (dist/ is the only writable bind).
 # The release binary links the Swift runtime statically (-Xswiftc -static-stdlib)
 # so the artifact does not require a Swift toolchain on the target host; the
 # remaining dynamic dependencies (glibc family, loader) are printed via ldd.
 linux_container_stage() {
   [ "$(uname -s)" = "Linux" ] || fail "--linux-container-stage runs only inside the Linux container"
+  [ "$(uname -m)" = "$LINUX_ARCH" ] || fail "container is $(uname -m), expected $LINUX_ARCH"
   require_tool swift
   require_tool tar
   require_tool gzip
@@ -236,7 +266,7 @@ linux_container_stage() {
 
   local BUILD_PATH="$WORK/linux-build"
   local PACKAGE_ROOT="$WORK/linux-package"
-  local PACKAGE_NAME="kittymgr-$VERSION-linux-x86_64"
+  local PACKAGE_NAME="kittymgr-$VERSION-linux-$LINUX_ARCH"
   local PACKAGE_DIR="$PACKAGE_ROOT/$PACKAGE_NAME"
   local ARTIFACT_PATH="$DIST/$LINUX_ARTIFACT"
 
@@ -264,12 +294,12 @@ linux_container_stage() {
   local BIN
   BIN="$(swift build --configuration release "${SWIFTPM_FLAGS[@]}" -Xswiftc -static-stdlib --show-bin-path)/kittymgr"
   [ -x "$BIN" ] || fail "release binary not found at $BIN"
-  readelf -h "$BIN" | grep -q 'X86-64' || fail "release binary is not x86_64"
+  readelf -h "$BIN" | grep -q "$ELF_MACHINE" || fail "release binary is not $LINUX_ARCH"
 
   install -m 0755 "$BIN" "$PACKAGE_DIR/kittymgr"
   install -m 0644 LICENSE "$PACKAGE_DIR/LICENSE"
   cat > "$PACKAGE_DIR/README.txt" <<EOF
-kittymgr $VERSION for Linux x86_64
+kittymgr $VERSION for Linux $LINUX_ARCH
 
 Install:
   install -m 0755 kittymgr /usr/local/bin/kittymgr
@@ -303,7 +333,7 @@ EOF
   REPORTED_VERSION="$("$SMOKE_BIN" --version)"
   echo "$REPORTED_VERSION"
   [ "$REPORTED_VERSION" = "kittymgr $VERSION" ] || fail "unexpected --version output: $REPORTED_VERSION"
-  readelf -h "$SMOKE_BIN" | grep -q 'X86-64' || fail "extracted binary is not x86_64"
+  readelf -h "$SMOKE_BIN" | grep -q "$ELF_MACHINE" || fail "extracted binary is not $LINUX_ARCH"
 
   echo "== [container] remaining runtime dependencies (ldd) =="
   ldd "$SMOKE_BIN"
@@ -316,7 +346,7 @@ if [ "$CONTAINER_STAGE" -eq 1 ]; then
   exit 0
 fi
 
-[ "$DRY_RUN" -eq 1 ] || fail "only --dry-run is supported in R5b; tag-based publishing is deferred to R5c"
+[ "$DRY_RUN" -eq 1 ] || fail "only --dry-run is supported; tag-based publishing is handled by .github/workflows/release.yml"
 
 if [ "$LINUX" -eq 1 ]; then
   linux_release

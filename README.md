@@ -65,17 +65,20 @@ paths build the macOS universal artifact and, via Docker, the Linux x86_64
 artifact; both write only under `dist/`:
 
 ```sh
-./scripts/release.sh --dry-run            # macOS universal (arm64 + x86_64)
-./scripts/release.sh --dry-run --linux    # Linux x86_64 inside a disposable swift:6.1 container
-(cd dist && shasum -a 256 -c SHA256SUMS)  # covers every artifact present in dist/
+./scripts/release.sh --dry-run                  # macOS universal (arm64 + x86_64)
+./scripts/release.sh --dry-run --linux          # Linux x86_64 inside a disposable swift:6.1 container
+./scripts/release.sh --dry-run --linux-aarch64  # Linux aarch64 (native on arm64 Docker hosts)
+(cd dist && shasum -a 256 -c SHA256SUMS)        # covers every artifact present in dist/
 ```
 
-The Linux mode requires a running Docker Engine: build, tests, packaging, and
+The Linux modes require a running Docker Engine: build, tests, packaging, and
 the packaged smoke all run inside `docker run --rm` with the repository mounted
-at `/workspace`, and the binary links the Swift runtime statically
-(`-Xswiftc -static-stdlib`). These local dry-runs do not create tags, push
-commits, or publish GitHub Releases. Tag-triggered upload and the Linux aarch64
-decision are separate follow-up milestones.
+read-only at `/workspace` (`dist/` is the only writable bind), and the binary
+links the Swift runtime statically (`-Xswiftc -static-stdlib`). The aarch64
+mode runs natively on arm64 Docker hosts (e.g. Apple Silicon) and its artifact
+is local-only for now — the tag-triggered release workflow publishes the macOS
+universal and Linux x86_64 artifacts. These local dry-runs do not create tags,
+push commits, or publish GitHub Releases.
 
 ## Usage
 

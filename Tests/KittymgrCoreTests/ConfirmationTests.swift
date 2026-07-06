@@ -22,7 +22,7 @@ struct ConfirmationTests {
         #expect(KittymgrCLI.confirmationAvailable(force: true, interactive: false))
         #expect(KittymgrCLI.confirmationAvailable(force: true, interactive: true))
         #expect(KittymgrCLI.confirmationAvailable(force: false, interactive: true))
-        #expect(!KittymgrCLI.confirmationAvailable(force: false, interactive: false))
+        #expect(KittymgrCLI.confirmationAvailable(force: false, interactive: false) == false)
     }
 
     // MARK: - uninstall
@@ -73,8 +73,8 @@ struct ConfirmationTests {
         }).run { _ in }
 
         #expect(done)
-        #expect(!asked)
-        #expect(!fm.fileExists(atPath: dir.managedDir.path))
+        #expect(asked == false)
+        #expect(fm.fileExists(atPath: dir.managedDir.path) == false)
     }
 
     // MARK: - backup restore
@@ -98,6 +98,22 @@ struct ConfirmationTests {
         #expect(logs.contains { $0.contains("Aborted") })
     }
 
+    @Test func backupRestoreDryRunCreatesNoSafetySnapshot() throws {
+        let dir = try tempConfigDir()
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        let file = dir.managedDir.appendingPathComponent("active.conf")
+        try "original\n".write(to: file, atomically: true, encoding: .utf8)
+        let store = SnapshotStore(configDir: dir)
+        let snapshot = try store.create(label: "before")
+        try "modified\n".write(to: file, atomically: true, encoding: .utf8)
+        let snapshotsBefore = store.list()
+
+        try BackupCommand(action: .restore(id: snapshot.id), configDir: dir, dryRun: true).run { _ in }
+
+        #expect(try String(contentsOf: file, encoding: .utf8) == "modified\n")
+        #expect(store.list() == snapshotsBefore)
+    }
+
     @Test func backupRestoreConfirmedRestoresAndForceSkipsPrompt() throws {
         let dir = try tempConfigDir()
         try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
@@ -116,8 +132,108 @@ struct ConfirmationTests {
             asked = true
             return false
         }).run { _ in }
-        #expect(!asked)
+        #expect(asked == false)
         #expect(try String(contentsOf: file, encoding: .utf8) == "original\n")
+    }
+
+    // MARK: - reversibility of destructive commands (Etapa 8 findings)
+
+    @Test func backupRestoreCreatesPreRestoreSafetySnapshot() throws {
+        let dir = try tempConfigDir()
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        let file = dir.managedDir.appendingPathComponent("active.conf")
+        try "original\n".write(to: file, atomically: true, encoding: .utf8)
+        let store = SnapshotStore(configDir: dir)
+        let snapshot = try store.create(label: "before")
+        try "modified\n".write(to: file, atomically: true, encoding: .utf8)
+
+        try BackupCommand(action: .restore(id: snapshot.id), configDir: dir, force: true).run { _ in }
+        #expect(try String(contentsOf: file, encoding: .utf8) == "original\n")
+
+        // The restore itself is undoable: the safety snapshot returns the state
+        // that existed right before it.
+        let safety = store.list().first { $0.label == "pre-restore" }
+        #expect(safety != nil)
+        if let safety {
+            try store.restore(safety)
+            #expect(try String(contentsOf: file, encoding: .utf8) == "modified\n")
+        }
+    }
+
+    @Test func backupRestoreAbortsWhenPreRestoreSnapshotFails() throws {
+        let dir = try tempConfigDir()
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        let store = SnapshotStore(configDir: dir)
+        let snapshot = try store.create(label: "empty")
+
+        try fm.removeItem(at: dir.backupsDir.appendingPathComponent("objects"))
+        try "not a directory".write(
+            to: dir.backupsDir.appendingPathComponent("objects"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let profileDir = dir.profilesDir.appendingPathComponent("work")
+        try fm.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        let conf = profileDir.appendingPathComponent("base.conf")
+        try "font_size 14\n".write(to: conf, atomically: true, encoding: .utf8)
+
+        do {
+            try BackupCommand(action: .restore(id: snapshot.id), configDir: dir, force: true).run { _ in }
+            Issue.record("Expected pre-restore snapshot creation to fail.")
+        } catch {
+            #expect(fm.fileExists(atPath: conf.path))
+            #expect(try String(contentsOf: conf, encoding: .utf8) == "font_size 14\n")
+        }
+    }
+
+    @Test func deleteWithSnapshotStoreIsUndoable() throws {
+        let dir = try tempConfigDir()
+        _ = try InitCommand(configDir: dir, dryRun: false).run()
+        try CreateCommand(store: ProfileStore(root: dir.profilesDir), rawName: "work").run { _ in }
+        let conf = dir.profilesDir.appendingPathComponent("work/base.conf")
+        try "font_size 13\n".write(to: conf, atomically: true, encoding: .utf8)
+
+        let store = SnapshotStore(configDir: dir)
+        var logs: [String] = []
+        try DeleteCommand(
+            store: ProfileStore(root: dir.profilesDir),
+            rawName: "work",
+            force: true,
+            snapshots: store
+        ).run { logs.append($0) }
+
+        #expect(fm.fileExists(atPath: dir.profilesDir.appendingPathComponent("work").path) == false)
+        #expect(logs.contains { $0.contains("Undo:") })
+
+        let safety = store.list().first { $0.label == "pre-delete" }
+        #expect(safety != nil)
+        if let safety {
+            try store.restore(safety)
+            #expect(try String(contentsOf: conf, encoding: .utf8) == "font_size 13\n")
+        }
+    }
+
+    @Test func deleteAbortsWhenPreDeleteSnapshotFails() throws {
+        let dir = try tempConfigDir()
+        let profileStore = ProfileStore(root: dir.profilesDir)
+        try CreateCommand(store: profileStore, rawName: "work").run { _ in }
+        let conf = dir.profilesDir.appendingPathComponent("work/base.conf")
+        try "font_size 15\n".write(to: conf, atomically: true, encoding: .utf8)
+        try fm.createDirectory(at: dir.managedDir, withIntermediateDirectories: true)
+        try "not a directory".write(to: dir.backupsDir, atomically: true, encoding: .utf8)
+
+        do {
+            try DeleteCommand(
+                store: profileStore,
+                rawName: "work",
+                force: true,
+                snapshots: SnapshotStore(configDir: dir)
+            ).run { _ in }
+            Issue.record("Expected pre-delete snapshot creation to fail.")
+        } catch {
+            #expect(profileStore.exists(try ProfileName(validating: "work")))
+            #expect(try String(contentsOf: conf, encoding: .utf8) == "font_size 15\n")
+        }
     }
 
     // MARK: - sync
@@ -155,8 +271,8 @@ struct ConfirmationTests {
 
         #expect(prompt.contains("sync will apply:"))
         #expect(logs.contains { $0.contains("Aborted") })
-        #expect(!fm.fileExists(atPath: dir.profilesDir.appendingPathComponent("focus").path))
-        #expect(!fm.fileExists(atPath: dir.activeConf.path))
+        #expect(fm.fileExists(atPath: dir.profilesDir.appendingPathComponent("focus").path) == false)
+        #expect(fm.fileExists(atPath: dir.activeConf.path) == false)
         #expect(ActivePointer(url: dir.activePointerFile).get() == nil)
     }
 

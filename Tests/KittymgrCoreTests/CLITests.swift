@@ -109,6 +109,21 @@ struct CLIWorkingDirectoryTests {
         #expect(fm.fileExists(atPath: configDir.path) == false)
     }
 
+    @Test func deleteDryRunDoesNotDeleteOrSnapshot() throws {
+        let configDir = fm.temporaryDirectory.appendingPathComponent("kittymgr-delete-dryrun-\(UUID().uuidString)")
+
+        let status = withKittyConfigDirectory(configDir) {
+            #expect(KittymgrCLI.run(["init"]) == 0)
+            #expect(KittymgrCLI.run(["create", "work"]) == 0)
+            return KittymgrCLI.run(["delete", "work", "--dry-run"])
+        }
+
+        let dir = ConfigDir(url: configDir.standardizedFileURL)
+        #expect(status == 0)
+        #expect(fm.fileExists(atPath: dir.profilesDir.appendingPathComponent("work").path))
+        #expect(SnapshotStore(configDir: dir).list().isEmpty)
+    }
+
     private func withKittyConfigDirectory<T>(_ configDir: URL, _ body: () throws -> T) rethrows -> T {
         let previousEnv = ProcessInfo.processInfo.environment["KITTY_CONFIG_DIRECTORY"]
         setenv("KITTY_CONFIG_DIRECTORY", configDir.path, 1)

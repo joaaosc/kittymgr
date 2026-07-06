@@ -88,7 +88,11 @@ public struct BackupCommand {
                 return
             }
         }
+        // Reversibility: the restore itself must be undoable. Capture the current
+        // state first, so restoring the wrong snapshot is a one-command recovery.
+        let safety = try store.create(label: "pre-restore")
         try store.restore(manifest)
         log("Restored snapshot \(manifest.id).")
+        log("Undo: `kittymgr backup restore \(safety.id)`")
     }
 }

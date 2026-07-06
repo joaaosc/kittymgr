@@ -110,7 +110,13 @@ public enum KittymgrCLI {
                     return 2
                 }
                 let force = flags.contains("--force") || flags.contains("-f")
-                try DeleteCommand(store: profileStore(), rawName: name, force: force, confirm: confirmOnStdin).run()
+                try DeleteCommand(
+                    store: profileStore(),
+                    rawName: name,
+                    force: force,
+                    confirm: confirmOnStdin,
+                    snapshots: SnapshotStore(configDir: ConfigDir.resolve())
+                ).run()
                 return 0
             case "switch":
                 guard let name = positionals.first else {
@@ -259,7 +265,8 @@ public enum KittymgrCLI {
                     store: ProfileStore(root: dir.profilesDir),
                     rawName: positionals[1],
                     force: force,
-                    confirm: confirmOnStdin
+                    confirm: confirmOnStdin,
+                    snapshots: SnapshotStore(configDir: dir)
                 ).run()
             case "current":
                 try CurrentCommand(activePointer: ActivePointer(url: dir.activePointerFile)).run()

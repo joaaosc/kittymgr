@@ -37,11 +37,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: .build
-          key: swiftpm-macos-${{ hashFiles('Package.resolved') }}
-          restore-keys: swiftpm-macos-
+      - name: Clean build outputs
+        run: rm -rf .build dist
       - name: Test
         run: swift test
       - name: Build, package, checksum, smoke
@@ -61,6 +58,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Clean build outputs
+        run: rm -rf .build dist
       # Build, full test suite, packaging, and the packaged smoke all run
       # inside a disposable swift:6.1 container (docker run --rm), exactly as
       # in the local dry-run.

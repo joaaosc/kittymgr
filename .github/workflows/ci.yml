@@ -14,11 +14,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: .build
-          key: swiftpm-macos-${{ hashFiles('Package.resolved') }}
-          restore-keys: swiftpm-macos-
+      - name: Clean build outputs
+        run: rm -rf .build
       - name: Build
         run: swift build
       - name: Test
@@ -32,11 +29,8 @@ jobs:
     container: swift:6.1
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: .build
-          key: swiftpm-linux-${{ hashFiles('Package.resolved') }}
-          restore-keys: swiftpm-linux-
+      - name: Clean build outputs
+        run: rm -rf .build
       - name: Build
         run: swift build
       - name: Test

@@ -230,10 +230,12 @@ linux_release() {
   # the container can prove at runtime that nothing outside dist/ is touched.
   echo "== linux $LINUX_ARCH build + test + package + smoke in disposable container =="
   docker run --rm \
+    --user "$(id -u):$(id -g)" \
     --platform "$DOCKER_PLATFORM" \
     --volume "$REPO_ROOT:/workspace:ro" \
     --volume "$DIST:/workspace/dist" \
     --env KITTYMGR_LINUX_ARCH="$LINUX_ARCH" \
+    --env HOME=/tmp \
     --workdir /workspace \
     "$DOCKER_IMAGE" \
     bash scripts/release.sh --linux-container-stage

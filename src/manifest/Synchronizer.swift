@@ -16,19 +16,27 @@ public struct Synchronizer {
     public let dryRun: Bool
     public let validator: any ConfigValidating
     public let reloader: any Reloading
+    public let confirm: ((String) -> Bool)?
 
+    /// `confirm` is opt-in: when non-nil and the reconcile would change disk, the
+    /// closure receives the full plan (a unified diff) and can veto the run before
+    /// anything is applied. nil (the default) preserves the unprompted behavior
+    /// for programmatic callers (TUI, `update`, tests); the CLI passes an
+    /// interactive stdin prompt unless `--force`/`--yes` is given.
     public init(
         configDir: ConfigDir,
         dryRun: Bool = false,
         fetcher: (any SourceFetching)? = nil,
         validator: any ConfigValidating = KittyConfigValidator(),
-        reloader: any Reloading = KittenReloader()
+        reloader: any Reloading = KittenReloader(),
+        confirm: ((String) -> Bool)? = nil
     ) {
         self.configDir = configDir
         self.fetcher = fetcher ?? DefaultSourceFetcher(cacheDir: configDir.cacheDir)
         self.dryRun = dryRun
         self.validator = validator
         self.reloader = reloader
+        self.confirm = confirm
     }
 
     public func run(log: (String) -> Void = { print($0) }) throws {
@@ -38,31 +46,17 @@ public struct Synchronizer {
         let store = SnapshotStore(configDir: configDir)
 
         if dryRun {
-            // Capture the full byte surface (binary-safe) so the preview reverts
-            // every file exactly — a text-only capture would drop, then delete,
-            // preexisting binary files under kittymgr/.
-            let beforeSurface = try store.currentSurface()
-            let beforeManagedSurface = try managedFileSurface()
-            let beforeText = beforeSurface.compactMapValues { String(data: $0, encoding: .utf8) }
-            let existingDirs = managedDirectories()
-            let diff: String
-            do {
-                _ = try applyToDisk(manifest, log: { _ in })
-                diff = UnifiedDiff.diffStates(old: beforeText, new: store.currentContents())
-            } catch {
-                // Even a mid-apply failure must leave the surface untouched.
-                try? store.restore(toSurface: beforeSurface)
-                try? restoreManagedFileSurface(beforeManagedSurface)
-                pruneNewEmptyDirectories(keeping: existingDirs)
-                throw error
-            }
-            try store.restore(toSurface: beforeSurface)
-            try restoreManagedFileSurface(beforeManagedSurface)
-            // `restore` rewrites files but leaves directories the reconcile created;
-            // drop any that are now empty so a preview leaves no phantom profile.
-            pruneNewEmptyDirectories(keeping: existingDirs)
+            let diff = try previewDiff(manifest, store: store)
             log(diff.isEmpty ? "[dry-run] Already in sync." : "[dry-run] sync would apply:\n" + diff)
             return
+        }
+
+        if let confirm {
+            let diff = try previewDiff(manifest, store: store)
+            if !diff.isEmpty, !confirm("sync will apply:\n" + diff + "\nProceed? [y/N] ") {
+                log("Aborted; nothing was changed.")
+                return
+            }
         }
 
         let snapshot = try store.create(label: "pre-sync")
@@ -95,6 +89,34 @@ public struct Synchronizer {
         report(reloader.reload(), log: log)
         try lockSources(manifest, log: log)
         log("Synced from \(configDir.manifestFile.lastPathComponent).")
+    }
+
+    /// Apply-and-revert preview of the reconcile. Captures the full byte surface
+    /// (binary-safe) so every file is reverted exactly — a text-only capture would
+    /// drop, then delete, preexisting binary files under kittymgr/. Returns the
+    /// unified diff a real run would apply; the surface is left untouched.
+    private func previewDiff(_ manifest: Manifest, store: SnapshotStore) throws -> String {
+        let beforeSurface = try store.currentSurface()
+        let beforeManagedSurface = try managedFileSurface()
+        let beforeText = beforeSurface.compactMapValues { String(data: $0, encoding: .utf8) }
+        let existingDirs = managedDirectories()
+        let diff: String
+        do {
+            _ = try applyToDisk(manifest, log: { _ in })
+            diff = UnifiedDiff.diffStates(old: beforeText, new: store.currentContents())
+        } catch {
+            // Even a mid-apply failure must leave the surface untouched.
+            try? store.restore(toSurface: beforeSurface)
+            try? restoreManagedFileSurface(beforeManagedSurface)
+            pruneNewEmptyDirectories(keeping: existingDirs)
+            throw error
+        }
+        try store.restore(toSurface: beforeSurface)
+        try restoreManagedFileSurface(beforeManagedSurface)
+        // `restore` rewrites files but leaves directories the reconcile created;
+        // drop any that are now empty so a preview leaves no phantom profile.
+        pruneNewEmptyDirectories(keeping: existingDirs)
+        return diff
     }
 
     // MARK: - Reconcile

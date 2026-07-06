@@ -12,11 +12,25 @@ public struct BackupCommand {
     public let action: Action
     public let store: SnapshotStore
     public let dryRun: Bool
+    public let force: Bool
+    public let confirm: (String) -> Bool
 
-    public init(action: Action, configDir: ConfigDir, dryRun: Bool = false) {
+    /// Without `force`, `restore` goes through `confirm` with a prompt naming
+    /// the snapshot and how many files it overwrites. The default auto-confirms
+    /// so programmatic callers keep explicit-invocation semantics; the CLI wires
+    /// an interactive stdin prompt plus a non-TTY gate.
+    public init(
+        action: Action,
+        configDir: ConfigDir,
+        dryRun: Bool = false,
+        force: Bool = false,
+        confirm: @escaping (String) -> Bool = { _ in true }
+    ) {
         self.action = action
         self.store = SnapshotStore(configDir: configDir)
         self.dryRun = dryRun
+        self.force = force
+        self.confirm = confirm
     }
 
     public func run(log: (String) -> Void = { print($0) }) throws {
@@ -64,6 +78,15 @@ public struct BackupCommand {
                 ? "[dry-run] Restore \(manifest.id) would make no changes."
                 : "[dry-run] Restore \(manifest.id) would apply:\n" + diff)
             return
+        }
+        if !force {
+            let files = (try? store.contents(of: manifest).count) ?? 0
+            let label = manifest.label.map { " ('\($0)')" } ?? ""
+            let prompt = "Restore snapshot \(manifest.id)\(label) from \(manifest.createdAt), overwriting the current managed state (\(files) file(s))? [y/N] "
+            guard confirm(prompt) else {
+                log("Aborted; snapshot \(manifest.id) was not restored.")
+                return
+            }
         }
         try store.restore(manifest)
         log("Restored snapshot \(manifest.id).")

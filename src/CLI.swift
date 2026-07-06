@@ -85,7 +85,14 @@ public enum KittymgrCLI {
                 return 0
             case "uninstall":
                 let removeManaged = options.contains("--purge") || options.contains("--remove-managed")
-                _ = try UninstallCommand(configDir: ConfigDir.resolve(), removeManaged: removeManaged).run()
+                let force = flags.contains("--force") || flags.contains("-f")
+                guard sensitiveGateOpen("uninstall", force: force) else { return 1 }
+                _ = try UninstallCommand(
+                    configDir: ConfigDir.resolve(),
+                    removeManaged: removeManaged,
+                    force: force,
+                    confirm: confirmOnStdin
+                ).run()
                 return 0
             case "list":
                 try ListCommand(store: profileStore()).run()
@@ -157,7 +164,19 @@ public enum KittymgrCLI {
             case "source":
                 return runSource(options, dryRun: dryRun)
             case "sync":
-                try Synchronizer(configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+                let force = options.contains("--force") || options.contains("-f") || options.contains("--yes")
+                if !dryRun {
+                    guard sensitiveGateOpen("sync", force: force) else { return 1 }
+                }
+                var syncConfirm: ((String) -> Bool)?
+                if !force, !dryRun {
+                    syncConfirm = { prompt in confirmOnStdin(prompt) }
+                }
+                try Synchronizer(
+                    configDir: ConfigDir.resolve(),
+                    dryRun: dryRun,
+                    confirm: syncConfirm
+                ).run()
                 return 0
             case "update":
                 let target = options.first { !$0.hasPrefix("-") }
@@ -456,6 +475,7 @@ public enum KittymgrCLI {
 
     private static func runBackup(_ options: [String], dryRun: Bool) -> Int32 {
         let (label, rest) = extractOption("--label", from: options)
+        let force = rest.contains("--force") || rest.contains("-f")
         let positionals = rest.filter { !$0.hasPrefix("-") }
 
         let action: BackupCommand.Action
@@ -475,8 +495,17 @@ public enum KittymgrCLI {
             return 2
         }
 
+        if case .restore = action, !dryRun {
+            guard sensitiveGateOpen("backup restore", force: force) else { return 1 }
+        }
         do {
-            try BackupCommand(action: action, configDir: ConfigDir.resolve(), dryRun: dryRun).run()
+            try BackupCommand(
+                action: action,
+                configDir: ConfigDir.resolve(),
+                dryRun: dryRun,
+                force: force,
+                confirm: confirmOnStdin
+            ).run()
             return 0
         } catch {
             printError("\(error)")
@@ -556,6 +585,22 @@ public enum KittymgrCLI {
         return (value, rest)
     }
 
+    /// Pure gate logic: a sensitive command may proceed when forced or when an
+    /// interactive terminal exists to ask on.
+    static func confirmationAvailable(force: Bool, interactive: Bool) -> Bool {
+        force || interactive
+    }
+
+    /// Sensitive commands never silently no-op in scripts: with no interactive
+    /// terminal to ask on and no `--force`, fail up front with instructions.
+    private static func sensitiveGateOpen(_ what: String, force: Bool) -> Bool {
+        if confirmationAvailable(force: force, interactive: Terminal().isInteractive) {
+            return true
+        }
+        printError("`kittymgr \(what)` needs confirmation; re-run with --force (no interactive terminal to ask on)")
+        return false
+    }
+
     private static func confirmOnStdin(_ prompt: String) -> Bool {
         FileHandle.standardOutput.write(Data(prompt.utf8))
         guard let line = readLine(strippingNewline: true)?.lowercased() else { return false }
@@ -568,7 +613,9 @@ public enum KittymgrCLI {
 
         Usage:
           kittymgr init                 Create the managed layer and inject the guarded include block.
-          kittymgr uninstall [--purge]  Remove the guarded block; --purge also deletes the kittymgr directory.
+          kittymgr uninstall [--purge] [-f]
+                                        Remove the guarded block after confirming; --purge also deletes the
+                                        kittymgr directory (--force/-f skips the prompt).
           kittymgr list                 List stored profiles.
           kittymgr create <name>        Create an empty profile.
           kittymgr delete <name> [-f]   Delete a profile (--force/-f skips confirmation).
@@ -593,12 +640,14 @@ public enum KittymgrCLI {
 
           kittymgr manifest <init|show>             Author/inspect the declarative kittymgr.toml.
           kittymgr source <list|add|remove> ...     Manage named remote sources in the manifest.
-          kittymgr sync                             Reconcile disk to kittymgr.toml (snapshot; rollback on failure).
+          kittymgr sync [--force]                   Reconcile disk to kittymgr.toml (shows the plan and asks first;
+                                                    snapshot; rollback on failure; --force/--yes skips the prompt).
           kittymgr update [<source>] [--check]      Re-resolve sources & sync; --check only reports what is outdated.
           kittymgr clean [--artifacts] [--force]    Remove orphan caches/backups; --artifacts --force also prunes unused themes/plugins/kittens.
           kittymgr backup create [--label <text>]   Snapshot the managed surface.
           kittymgr backup list          List snapshots (id, timestamp, label).
-          kittymgr backup restore <id>  Restore a snapshot byte-for-byte.
+          kittymgr backup restore <id> [-f]
+                                        Restore a snapshot byte-for-byte (asks first; --force/-f skips).
           kittymgr ui                   Launch the interactive picker (alias: pick).
           kittymgr help                 Show this message.
           kittymgr --version            Print the version (alias: -V).

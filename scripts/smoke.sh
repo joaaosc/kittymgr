@@ -77,7 +77,7 @@ grep -q '# Active profile: work' "$TMP_KITTY/kittymgr/active.conf" \
   || fail "active.conf was not rendered for 'work'"
 
 echo "== uninstall =="
-"$BIN" uninstall
+"$BIN" uninstall --force
 if grep -q 'kittymgr' "$TMP_KITTY/kitty.conf"; then
   fail "uninstall left kittymgr references in kitty.conf"
 fi

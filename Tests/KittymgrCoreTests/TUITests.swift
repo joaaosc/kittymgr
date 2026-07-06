@@ -228,7 +228,7 @@ struct TUIEngineR3Tests {
         let result = try runTUI(fixture, keys: [.enter, .enter, .enter, .escape])
 
         #expect(result.output.contains("[dry-run]"))
-        #expect(result.output.contains("[Enter] aplicar"))
+        #expect(result.output.contains("[Enter] apply"))
         #expect(fixture.pointer.get() == "work")
         #expect((try String(contentsOf: fixture.configDir.activeConf, encoding: .utf8)).contains("include profiles/work/base.conf"))
         #expect(SnapshotStore(configDir: fixture.configDir).list().count == 1)
@@ -243,7 +243,7 @@ struct TUIEngineR3Tests {
         let result = try runTUI(fixture, keys: [.enter, .escape, .escape])
 
         #expect(result.output.contains("[dry-run]"))
-        #expect(result.output.contains("[Esc] cancelar"))
+        #expect(result.output.contains("[Esc] cancel"))
         #expect(fixture.pointer.get() == nil)
         #expect(fileManager.fileExists(atPath: fixture.configDir.activeConf.path) == false)
         #expect(SnapshotStore(configDir: fixture.configDir).list().isEmpty)
@@ -318,7 +318,7 @@ struct TUIEngineR3Tests {
         let result = try runTUI(fixture, keys: [.tab, .tab, .tab, .enter, .enter, .enter, .escape])
 
         #expect(result.output.contains("[dry-run] Restore \(snapshot.id) would apply"))
-        #expect(result.output.contains("[Enter] aplicar"))
+        #expect(result.output.contains("[Enter] apply"))
         #expect(try String(contentsOf: base, encoding: .utf8) == "font_size 12\n")
     }
 

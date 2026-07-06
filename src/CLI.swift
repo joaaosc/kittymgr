@@ -602,7 +602,7 @@ public enum KittymgrCLI {
     }
 
     private static func confirmOnStdin(_ prompt: String) -> Bool {
-        FileHandle.standardOutput.write(Data(prompt.utf8))
+        FileHandle.standardOutput.write(Data(ConsoleStyle.bold(prompt).utf8))
         guard let line = readLine(strippingNewline: true)?.lowercased() else { return false }
         return line == "y" || line == "yes"
     }
@@ -661,6 +661,6 @@ public enum KittymgrCLI {
     }
 
     private static func printError(_ message: String) {
-        FileHandle.standardError.write(Data("error: \(message)\n".utf8))
+        FileHandle.standardError.write(Data("\(ConsoleStyle.errorLabel("error:")) \(message)\n".utf8))
     }
 }

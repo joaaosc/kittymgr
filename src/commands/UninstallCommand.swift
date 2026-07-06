@@ -62,6 +62,7 @@ public struct UninstallCommand {
             try? fm.removeItem(at: configDir.managedDir)
             log("Removed kittymgr directory.")
         }
+        log("kitty.conf is back under your full control. Reinstall anytime with `kittymgr init`.")
         return true
     }
 

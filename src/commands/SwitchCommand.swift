@@ -91,5 +91,8 @@ public struct SwitchCommand {
             log("Snapshot pre-apply: \(snapshotID).")
         }
         log("Switched to '\(name.value)'.")
+        if let snapshotID = result.snapshotID {
+            log("Undo: `kittymgr backup restore \(snapshotID)`")
+        }
     }
 }

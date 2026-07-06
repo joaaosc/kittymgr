@@ -31,7 +31,7 @@ public final class TUIEngine {
     private var selectedThemeIndex = 0
     private var selectedBackupIndex = 0
     
-    private var statusMessage = "Pressione [Tab] para navegar entre painéis."
+    private var statusMessage = "Press Tab to move between panels."
     private var statusIsError = false
     
     private var configDir: ConfigDir {
@@ -112,7 +112,7 @@ public final class TUIEngine {
                 try handleClean()
             case .char("r"), .char("R"):
                 try loadData()
-                showSuccess("Dados recarregados com sucesso.")
+                showSuccess("Refreshed.")
             default:
                 break
             }
@@ -169,7 +169,7 @@ public final class TUIEngine {
     }
     
     private func clearStatus() {
-        statusMessage = "Pressione [Tab] para navegar entre painéis."
+        statusMessage = "Press Tab to move between panels."
         statusIsError = false
     }
     
@@ -209,11 +209,11 @@ public final class TUIEngine {
         if let error = previewResult.error {
             renderActionScreen(
                 title: title,
-                subtitle: "Preview falhou.",
-                body: previewResult.output + "\nErro: \(error)",
-                footer: "[Enter/Esc] voltar"
+                subtitle: "Preview failed.",
+                body: previewResult.output + "\nError: \(error)",
+                footer: "[Enter/Esc] back"
             )
-            showError("Preview falhou: \(error)")
+            showError("Preview failed: \(error)")
             try waitForDismiss()
             return
         }
@@ -221,9 +221,9 @@ public final class TUIEngine {
         while true {
             renderActionScreen(
                 title: title,
-                subtitle: "O que vai mudar:",
+                subtitle: "What will change:",
                 body: previewResult.output,
-                footer: "[Enter] aplicar   [Esc] cancelar"
+                footer: "[Enter] apply   [Esc] cancel"
             )
 
             switch try readKey() {
@@ -233,24 +233,24 @@ public final class TUIEngine {
                 if let error = applyResult.error {
                     renderActionScreen(
                         title: title,
-                        subtitle: "Apply falhou.",
-                        body: applyResult.output + "\nErro: \(error)",
-                        footer: "[Enter/Esc] voltar"
+                        subtitle: "Apply failed.",
+                        body: applyResult.output + "\nError: \(error)",
+                        footer: "[Enter/Esc] back"
                     )
-                    showError("Erro: \(error)")
+                    showError("Error: \(error)")
                 } else {
                     renderActionScreen(
                         title: title,
-                        subtitle: "Resultado:",
+                        subtitle: "Result:",
                         body: applyResult.output,
-                        footer: "[Enter/Esc] voltar"
+                        footer: "[Enter/Esc] back"
                     )
-                    showSuccess("Aplicado. Veja o resultado da acao.")
+                    showSuccess("Applied.")
                 }
                 try waitForDismiss()
                 return
             case .escape, .ctrlC:
-                showSuccess("Cancelado; nada escrito.")
+                showSuccess("Cancelled; nothing written.")
                 return
             default:
                 break
@@ -269,7 +269,7 @@ public final class TUIEngine {
     }
 
     private func renderActionScreen(title: String, subtitle: String, body: String, footer: String) {
-        let visibleBody = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "(sem mudancas)" : body
+        let visibleBody = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "(no changes)" : body
         emit(
             ANSI.clear + ANSI.home
             + "\(ANSI.bold)\(title)\(ANSI.reset)\n\n"
@@ -295,7 +295,7 @@ public final class TUIEngine {
         let target = profiles[selectedProfileIndex]
 
         try previewAndConfirm(
-            title: "Ativar perfil '\(target)'",
+            title: "Activate profile '\(target)'",
             preview: { log in
                 try SwitchCommand(
                     profileStore: self.profileStore,
@@ -330,7 +330,7 @@ public final class TUIEngine {
         let plugin = plugins[selectedPluginIndex]
         let active = activePointer.get()
         guard let activeProfile = active else {
-            showError("Nenhum perfil ativo. Ative um perfil primeiro.")
+            showError("No active profile. Activate a profile first.")
             return
         }
         
@@ -338,7 +338,7 @@ public final class TUIEngine {
         let enabled = Set(profileStore.metadata(for: profileName).enabledPlugins)
         let isEnabled = enabled.contains(plugin.name)
         let action: PluginCommand.Action = isEnabled ? .disable(plugin.name) : .enable(plugin.name)
-        let label = isEnabled ? "Desabilitar plugin '\(plugin.name)'" : "Habilitar plugin '\(plugin.name)'"
+        let label = isEnabled ? "Disable plugin '\(plugin.name)'" : "Enable plugin '\(plugin.name)'"
 
         try previewAndConfirm(
             title: label,
@@ -374,7 +374,7 @@ public final class TUIEngine {
         let theme = themes[selectedThemeIndex]
 
         try previewAndConfirm(
-            title: "Ativar tema '\(theme)'",
+            title: "Activate theme '\(theme)'",
             preview: { log in
                 try BlockCommand(
                     action: .themeSwitch(name: theme),
@@ -401,7 +401,7 @@ public final class TUIEngine {
         let manifest = backups[selectedBackupIndex]
 
         try previewAndConfirm(
-            title: "Restaurar backup '\(manifest.id)'",
+            title: "Restore backup '\(manifest.id)'",
             preview: { log in
                 try BackupCommand(action: .restore(id: manifest.id), configDir: self.configDir, dryRun: true).run(log: log)
             },
@@ -413,7 +413,7 @@ public final class TUIEngine {
 
     private func handleSync() throws {
         try previewAndConfirm(
-            title: "Sincronizar manifest",
+            title: "Sync manifest",
             preview: { log in
                 try Synchronizer(
                     configDir: self.configDir,
@@ -437,7 +437,7 @@ public final class TUIEngine {
 
     private func handleUpdate() throws {
         try previewAndConfirm(
-            title: "Atualizar fontes",
+            title: "Update sources",
             preview: { log in
                 try UpdateCommand(
                     configDir: self.configDir,
@@ -461,7 +461,7 @@ public final class TUIEngine {
 
     private func handleClean() throws {
         try previewAndConfirm(
-            title: "Limpeza conservadora",
+            title: "Clean (conservative)",
             preview: { log in
                 try CleanCommand(configDir: self.configDir, artifacts: false, force: false, dryRun: true).run(log: log)
             },
@@ -481,12 +481,12 @@ public final class TUIEngine {
         var frame: [String] = []
         
         // 1. Header Title Bar
-        let activeProfile = activePointer.get() ?? "(nenhum)"
+        let activeProfile = activePointer.get() ?? "(none)"
         let blockStore = BlockStore(managedDir: configDir.managedDir)
-        let activeTheme = blockStore.state().activeTheme ?? "(nenhum)"
+        let activeTheme = blockStore.state().activeTheme ?? "(none)"
         
-        let titleText = " kittymgr TUI "
-        let detailsText = " Perfil: \(activeProfile) | Tema: \(activeTheme) "
+        let titleText = " kittymgr "
+        let detailsText = " Profile: \(activeProfile) | Theme: \(activeTheme) "
         let titlePadding = max(0, cols - titleText.count - detailsText.count - 4)
         
         let headerLine = ANSI.bgBlue + ANSI.white + ANSI.bold
@@ -515,7 +515,7 @@ public final class TUIEngine {
                 profileLines.append("  \(activeIndicator) \(p)")
             }
         }
-        let profilesBox = drawBox(title: "Perfis", lines: profileLines, width: leftWidth, height: quadHeight, isFocused: selectedPanel == 0)
+        let profilesBox = drawBox(title: "Profiles", lines: profileLines, width: leftWidth, height: quadHeight, isFocused: selectedPanel == 0)
         
         // Quadrant 1: Plugins (Top-Right)
         var pluginLines: [String] = []
@@ -539,9 +539,9 @@ public final class TUIEngine {
             }
         }
         if plugins.isEmpty {
-            pluginLines.append("  (nenhum plugin encontrado)")
+            pluginLines.append("  (no plugins found)")
         }
-        let pluginsBox = drawBox(title: "Plugins para '\(selectedProfileName)'", lines: pluginLines, width: rightWidth, height: quadHeight, isFocused: selectedPanel == 1)
+        let pluginsBox = drawBox(title: "Plugins for '\(selectedProfileName)'", lines: pluginLines, width: rightWidth, height: quadHeight, isFocused: selectedPanel == 1)
         
         // Quadrant 2: Themes (Bottom-Left)
         var themeLines: [String] = []
@@ -557,9 +557,9 @@ public final class TUIEngine {
             }
         }
         if themes.isEmpty {
-            themeLines.append("  (nenhum tema instalado)")
+            themeLines.append("  (no themes installed)")
         }
-        let themesBox = drawBox(title: "Temas de Blocos", lines: themeLines, width: leftWidth, height: quadHeight, isFocused: selectedPanel == 2)
+        let themesBox = drawBox(title: "Themes", lines: themeLines, width: leftWidth, height: quadHeight, isFocused: selectedPanel == 2)
         
         // Quadrant 3: Backups (Bottom-Right)
         var backupLines: [String] = []
@@ -575,7 +575,7 @@ public final class TUIEngine {
             }
         }
         if backups.isEmpty {
-            backupLines.append("  (nenhum backup encontrado)")
+            backupLines.append("  (no backups yet)")
         }
         let backupsBox = drawBox(title: "Backups", lines: backupLines, width: rightWidth, height: quadHeight, isFocused: selectedPanel == 3)
         
@@ -600,18 +600,18 @@ public final class TUIEngine {
         let instructions: String
         switch selectedPanel {
         case 0:
-            instructions = "[Setas/Tab] Navegar | [Enter] Ativar Perfil | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
+            instructions = "[Arrows/Tab] Navigate | [Enter] Switch profile | [S] Sync | [U] Update | [L] Clean | [Q] Quit"
         case 1:
-            instructions = "[Setas/Tab] Navegar | [Enter] Alternar Plugin | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
+            instructions = "[Arrows/Tab] Navigate | [Enter] Toggle plugin | [S] Sync | [U] Update | [L] Clean | [Q] Quit"
         case 2:
-            instructions = "[Setas/Tab] Navegar | [Enter] Ativar Tema | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
+            instructions = "[Arrows/Tab] Navigate | [Enter] Switch theme | [S] Sync | [U] Update | [L] Clean | [Q] Quit"
         case 3:
-            instructions = "[Setas/Tab] Navegar | [Enter] Restaurar Backup | [S] Sync | [U] Update | [L] Clean | [Q] Sair"
+            instructions = "[Arrows/Tab] Navigate | [Enter] Restore backup | [S] Sync | [U] Update | [L] Clean | [Q] Quit"
         default:
-            instructions = "[Setas/Tab] Navegar | [Enter] Confirmar | [Q] Sair"
+            instructions = "[Arrows/Tab] Navigate | [Enter] Confirm | [Q] Quit"
         }
         
-        let footerLine = ANSI.dim + "Atalhos: " + ANSI.reset + ANSI.bold + instructions + ANSI.reset
+        let footerLine = ANSI.dim + "Keys: " + ANSI.reset + ANSI.bold + instructions + ANSI.reset
         frame.append(footerLine)
         
         // Clear screen and draw frame

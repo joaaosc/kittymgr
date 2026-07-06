@@ -65,6 +65,11 @@ public struct InitCommand {
         log(confExists
             ? "Injected managed include block into kitty.conf."
             : "Created kitty.conf with managed include block.")
+        log("")
+        log("kittymgr owns only \(configDir.relativePath(of: configDir.managedDir))/ and one guarded block at the top of kitty.conf.")
+        log("Your own settings always win: kitty reads them after the managed block.")
+        log("Undo anytime with `kittymgr uninstall`.")
+        log("Next: `kittymgr create <name>` to make your first profile, or just run `kittymgr` for the UI.")
         return true
     }
 

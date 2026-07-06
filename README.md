@@ -1,299 +1,186 @@
 # kittymgr
 
-[![CI](https://github.com/joaaosc/garfield/actions/workflows/ci.yml/badge.svg)](https://github.com/joaaosc/garfield/actions/workflows/ci.yml)
+Safe, reversible configuration manager for the [kitty](https://sw.kovidgoyal.net/kitty/) terminal.
 
-A non-invasive configuration manager for the [kitty](https://sw.kovidgoyal.net/kitty/)
-terminal. kittymgr never rewrites a user's `kitty.conf`; it attaches a single,
-clearly fenced `include` block and keeps all managed state in a dedicated
-`kittymgr/` subdirectory. Every change is backed up, idempotent, and reversible.
+[![CI](https://github.com/joaaosc/kittymgr/actions/workflows/ci.yml/badge.svg)](https://github.com/joaaosc/kittymgr/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
-## Status
+kittymgr organizes a kitty setup into profiles you can switch between, without ever
+rewriting your `kitty.conf` by hand. It adds a single fenced `include` line to your
+config and keeps everything it manages in its own folder. Every change is backed up
+first and can be undone.
 
-- Managed layer: `init`, `uninstall`.
-- Profiles: `list`, `create`, `delete`, `switch`, `current` (also under the `profile` verb).
-- Plugins (per-profile config snippets): `plugin list/enable/disable`.
-- Backups & preview: `backup create/list/restore`, plus a global `--dry-run` flag.
-- Atomic apply with rollback: `apply` (snapshot → write → validate → reload/rollback).
-- Modular blocks: `theme`, `key`, `snippet`.
-- Kittens (isolated scripts, never auto-run): `kitten list/install/remove`.
-- Remote sources: install themes/plugins/kittens from git/URL; `theme install <name>` pulls from the built-in catalog.
-- Declarative config: `kittymgr.toml` manifest (schema v2 — active selection, per-profile plugins, `keys`/`snippets` slugs, `[[sources]]`, and `[[themes]]`/`[[plugins]]`/`[[kittens]]`), `manifest init/show`, `source add/list/remove`.
-- Reconcile & pin: `sync` (disk ↔ manifest; installs declared artifacts; snapshot + rollback), `update` / `update --check`, `kittymgr/kittymgr.lock`.
-- Health & cleanup: `doctor` (environment + store integrity), `clean` (prune orphan caches/backups; `--artifacts --force` also prunes unused themes/plugins/kittens).
-- Interactive TUI: `ui` (alias `pick`) with preview + Enter/Esc confirmation. Version: `kittymgr --version`.
+Use it to keep separate setups (work, personal, presentations), try themes and
+keybindings safely, and reproduce the same kitty configuration on another machine.
 
-## Requirements
+## How it works
 
-- A Swift 6.1+ toolchain (SwiftPM). macOS 13+ or Linux (glibc).
-- Optional at runtime: `kitty` (config validation + live reload) and `git` (git
-  sources); both degrade gracefully when absent — run `kittymgr doctor` to see what
-  is available.
+kittymgr adds one clearly marked block to the **top** of your `kitty.conf`:
 
-Portability: the domain logic is Foundation-only, and SHA-256 uses CryptoKit on
-Apple platforms and [swift-crypto](https://github.com/apple/swift-crypto) on Linux.
-Both platforms are exercised in CI on every push and pull request — build, the
-full test suite, and the end-to-end smoke run on `macos-15` and in the official
-`swift:6.1` container (swift-crypto 4.5 requires a Swift 6.1 toolchain, so
-`swift:6.0` is not sufficient on Linux). See [Tests](#tests) for the local
-Linux verification command.
-
-## Quickstart
-
-```sh
-swift build
-.build/debug/kittymgr init           # attach the managed include block
-.build/debug/kittymgr create work    # create a profile
-#   add .conf snippets under kittymgr/profiles/work/, then:
-.build/debug/kittymgr switch work    # validate, apply atomically, reload kitty
-.build/debug/kittymgr ui             # or drive everything from the TUI
+```
+# >>> kittymgr (managed) >>>
+# Managed by kittymgr. Do not edit inside these markers.
+include kittymgr/active.conf
+# <<< kittymgr (managed) <<<
 ```
 
-Nothing is irreversible: every mutating command snapshots first, `--dry-run`
-previews any change as a unified diff, and `backup restore <id>` rolls back.
+Everything below that block stays yours and always wins, because kitty applies the
+last setting it reads. kittymgr only ever touches its own `kittymgr/` folder and that
+single include line. Switching a profile just rewrites `kittymgr/active.conf` and asks
+kitty to reload. Before any change, kittymgr takes a snapshot, so `backup restore`
+returns you to exactly where you were.
 
-## Build & install
+<!-- Drop a screenshot or GIF at docs/screenshot.png to show the terminal UI here. -->
+![kittymgr terminal UI](docs/screenshot.png)
+
+## Install
+
+Every release ships a prebuilt, checksum-verified binary. No toolchain required.
+
+### Requirements
+
+- macOS 13 or later, or Linux with glibc (x86_64).
+- Optional: `kitty` on your PATH (enables config validation and live reload) and
+  `git` (for installing themes/plugins from git). Both are optional — kittymgr works
+  without them and tells you what is missing via `kittymgr doctor`.
+
+### macOS (without Homebrew)
+
+Download the installer, read it, preview what it will do, then run it:
 
 ```sh
-swift build                        # debug build at .build/debug/kittymgr
-swift build -c release             # optimized build at .build/release/kittymgr
-install -m 0755 .build/release/kittymgr /usr/local/bin/kittymgr   # put it on PATH
-kittymgr --version
+curl -fsSLO https://raw.githubusercontent.com/joaaosc/kittymgr/main/install.sh
+less install.sh                # review before running
+sh install.sh --dry-run        # shows platform, release, and target; writes nothing
+sh install.sh                  # installs to ~/.local/bin/kittymgr
 ```
 
-Local release packaging is staged in small milestones. The implemented dry-run
-paths build the macOS universal artifact and, via Docker, the Linux x86_64
-artifact; both write only under `dist/`:
+Prefer a manual download? Grab `kittymgr-<version>-macos-universal.tar.gz` and
+`SHA256SUMS` from the [releases page](https://github.com/joaaosc/kittymgr/releases):
 
 ```sh
-./scripts/release.sh --dry-run                  # macOS universal (arm64 + x86_64)
-./scripts/release.sh --dry-run --linux          # Linux x86_64 inside a disposable swift:6.1 container
-./scripts/release.sh --dry-run --linux-aarch64  # Linux aarch64 (native on arm64 Docker hosts)
-(cd dist && shasum -a 256 -c SHA256SUMS)        # covers every artifact present in dist/
+shasum -a 256 -c SHA256SUMS --ignore-missing
+tar -xzf kittymgr-<version>-macos-universal.tar.gz
+install -m 0755 kittymgr-<version>-macos-universal/kittymgr ~/.local/bin/kittymgr
 ```
 
-The Linux modes require a running Docker Engine: build, tests, packaging, and
-the packaged smoke all run inside `docker run --rm` with the repository mounted
-read-only at `/workspace` (`dist/` is the only writable bind), and the binary
-links the Swift runtime statically (`-Xswiftc -static-stdlib`). The aarch64
-mode runs natively on arm64 Docker hosts (e.g. Apple Silicon) and its artifact
-is local-only for now — the tag-triggered release workflow publishes the macOS
-universal and Linux x86_64 artifacts. These local dry-runs do not create tags,
-push commits, or publish GitHub Releases.
+### Linux
+
+Same installer — it detects the platform automatically:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/joaaosc/kittymgr/main/install.sh
+less install.sh
+sh install.sh --dry-run
+sh install.sh
+```
+
+Or manually, with `kittymgr-<version>-linux-x86_64.tar.gz` and `SHA256SUMS`:
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xzf kittymgr-<version>-linux-x86_64.tar.gz
+install -m 0755 kittymgr-<version>-linux-x86_64/kittymgr ~/.local/bin/kittymgr
+```
+
+If `~/.local/bin` is not on your PATH, add it:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"   # add to ~/.zshrc or ~/.bashrc to keep it
+```
+
+The installer verifies the checksum before doing anything, writes only
+`<prefix>/bin/kittymgr`, never uses `sudo`, and reinstalling the same version does
+nothing. Use `--prefix DIR` to install elsewhere and `--version X.Y.Z` to pick a
+specific release.
+
+### Uninstall
+
+```sh
+kittymgr uninstall           # remove the managed block; asks for confirmation first
+kittymgr uninstall --purge   # also delete the kittymgr/ folder (--force skips the prompt)
+rm ~/.local/bin/kittymgr     # remove the binary
+```
 
 ## Usage
 
 ```sh
-# Create the managed layer and inject the guarded include block.
-kittymgr init
+kittymgr init                 # attach the managed block to kitty.conf
+kittymgr create work          # create a profile
+#   put your .conf snippets in kittymgr/profiles/work/, then:
+kittymgr switch work          # validate, apply, and reload kitty
+kittymgr current              # show the active profile
+kittymgr                      # or do it all from the interactive UI (alias: kittymgr ui)
+```
 
-# Remove the guarded block and restore kitty.conf to its pre-init state.
-kittymgr uninstall
+Common tasks:
 
-# Also delete the managed directory.
-kittymgr uninstall --purge
+```sh
+kittymgr list                          # list profiles
+kittymgr theme install gruvbox         # install a theme from the built-in catalog
+kittymgr theme switch gruvbox          # one active theme at a time
+kittymgr plugin enable theme-sample    # turn a config bundle on for this profile
+kittymgr backup list                   # list snapshots
+kittymgr backup restore <id>           # roll back to a snapshot
+kittymgr doctor                        # check environment and store health
+```
 
-# Profiles.
-kittymgr list                 # List stored profiles.
-kittymgr create work          # Create an empty profile.
-kittymgr delete work          # Delete a profile (prompts; --force/-f to skip).
+Preview any change without writing by adding `--dry-run`; it prints a diff of what
+would happen. Every command accepts `--help`.
 
-# Activation.
-kittymgr switch work          # Activate a profile and reload kitty.
-kittymgr current              # Print the active profile.
-
-# Plugins (per-profile).
-kittymgr plugin list                          # List plugins and enabled state.
-kittymgr plugin enable theme-sample           # Enable for the active profile.
-kittymgr plugin disable theme-sample --profile work
-
-# Backups, history, and preview.
-kittymgr backup create --label demo           # Snapshot the managed surface.
-kittymgr backup list                          # List snapshots (id, timestamp, label).
-kittymgr backup restore <id>                  # Restore a snapshot byte-for-byte.
-kittymgr backup restore <id> --dry-run        # Preview the restore as a unified diff.
-
-# Atomic re-apply of the active profile (validate; rollback on failure).
-kittymgr apply
-kittymgr apply --dry-run                       # Preview as a unified diff.
-
-# Modular blocks (compose on top of the active profile).
-kittymgr theme install gruvbox                 # From the built-in kitty-themes catalog.
-kittymgr theme search gruv                     # Search the catalog.
-kittymgr theme install mytheme --git <url>     # Or from any git/URL source.
-kittymgr theme switch gruvbox                  # One active theme at a time.
-kittymgr key add 'ctrl+shift+e launch --type=tab'
-kittymgr snippet add tabs --from tabs.conf
-
-# Kittens (scripts; isolated, never executed by kittymgr).
-kittymgr kitten install hello --from ./hello.py
-kittymgr kitten list                           # Prints the explicit invocation command.
-kittymgr kitten remove hello
-
-# Declarative config: describe everything in kittymgr.toml, then reconcile.
-kittymgr manifest init                         # Bootstrap the manifest from current state.
-kittymgr source add themes --git <url>         # Register a named remote source.
-kittymgr sync --dry-run                        # Preview disk -> manifest reconciliation.
-kittymgr sync                                  # Apply it (snapshot; rollback on failure).
-kittymgr update                                # Re-resolve sources, re-pin kittymgr/kittymgr.lock, sync.
-kittymgr update --check                        # Report which sources have newer commits (writes nothing).
-
-# Health and cleanup.
-kittymgr doctor                                # Environment + managed-store health (OK/WARN/FAIL).
-kittymgr clean                                 # Remove orphan source caches and backup objects.
-kittymgr clean --artifacts --force             # Also prune themes/plugins/kittens nothing references.
-
-# Interactive terminal UI for switch, plugin/theme toggles, restore, sync, update, and conservative clean.
-kittymgr ui                                  # Shows dry-run diff; Enter applies, Esc cancels.
-
-# Every command also accepts --help.
+```sh
+kittymgr switch work --dry-run
 kittymgr --help
 ```
 
-The global `--dry-run` flag previews a change as a unified diff and writes
-nothing. Snapshots are kept under `kittymgr/backups/` as content-addressed objects
-plus one JSON manifest per snapshot; the manifest is published with an atomic
-rename, so an interrupted snapshot never leaves a partial entry in the history.
+Full command reference is in `kittymgr --help`. To build from source instead of using
+a release binary, see [How to build](#how-to-build).
 
-`kittymgr ui` requires an interactive TTY. When stdin/stdout are piped, it exits
-with an error before rendering or writing; use the equivalent CLI command with
-`--dry-run` for CI or scripts. Profile creation/deletion, manifest editing, and
-`clean --artifacts` stay on the CLI.
+## How to build
 
-## How it works
-
-`init` performs the following, atomically and idempotently:
-
-1. Resolves the kitty config directory.
-2. Creates `<config>/kittymgr/` and an empty `kittymgr/active.conf` entry point.
-3. Backs up an existing `kitty.conf` to `kittymgr/backups/conf/kitty.conf.bak.<timestamp>`.
-4. Inserts one guarded block at the **top** of `kitty.conf`:
-
-   ```
-   # >>> kittymgr (managed) >>>
-   # Managed by kittymgr. Do not edit inside these markers.
-   include kittymgr/active.conf
-   # <<< kittymgr (managed) <<<
-   ```
-
-The block is placed at the top so the managed `include` is evaluated before the
-user's own settings. kitty applies options last-wins, so the user's `kitty.conf`
-retains final precedence over every managed layer.
-
-Re-running `init` detects the existing markers and makes no changes. If a legacy
-`managed/` layout is present and `kittymgr/` is absent, `init` migrates it by
-renaming `managed/` to `kittymgr/`, moving a root `kittymgr.lock` to
-`kittymgr/kittymgr.lock`, and rewriting only the guarded anchor in `kitty.conf`.
-Other commands refuse to operate on the legacy layout and instruct you to run
-`kittymgr init` first. `kittymgr.toml` remains at the config directory root
-because it is user-owned input, not generated tool state.
-
-`uninstall` removes only the guarded block, restoring the surrounding content
-byte-for-byte. If `init` created `kitty.conf` (none existed before), `uninstall`
-removes the file entirely.
-
-## Profiles
-
-A profile is a folder of `.conf` snippets under the managed directory:
-
-```
-kittymgr/profiles/<name>/*.conf
-```
-
-`create` makes an empty profile directory; add `.conf` files to it. An empty
-profile is valid and contributes no settings. Names are restricted to
-`A-Z a-z 0-9 . _ -`, must not start with `.`, and may not contain path
-separators or traversal.
-
-`switch <name>` regenerates `kittymgr/active.conf` (a small generated file, not a
-symlink), records the selection in `kittymgr/.kittymgr-active`, and triggers a live
-reload via `kitten @ load-config`. When kitty remote control is unavailable, the
-switch is still persisted and manual reload instructions are printed (non-fatal).
-`current` prints the active profile.
-
-## Plugins
-
-A plugin is a reusable, composable bundle of `.conf` snippets under the managed
-directory:
-
-```
-kittymgr/plugins/<name>/*.conf
-kittymgr/plugins/<name>/plugin.meta   # optional: priority=<int>
-```
-
-Plugins are enabled per-profile (stored in `kittymgr/profiles/<name>/profile.json`),
-so the same plugin can be on for one profile and off for another. `init` seeds a
-sample `theme-sample` plugin.
-
-`active.conf` is always regenerated from scratch in a deterministic order, so
-disabling a plugin leaves no residual lines:
-
-1. profile base snippets — `profiles/<profile>/*.conf` (lexical)
-2. enabled plugins — `plugins/<plugin>/*.conf`, plugins ordered by `priority`
-   ascending then name; higher priority wins
-3. the user's `kitty.conf` settings (after the managed `include`) win over all of
-   the above
-
-`plugin enable`/`plugin disable` apply to the active profile by default, or to
-`--profile <name>`. Changes to the active profile regenerate `active.conf` and
-reload immediately.
-
-## Declarative manifest (kittymgr.toml)
-
-`kittymgr.toml` describes the reproducible configuration as code (schema v2). A v1
-manifest (without `schema_version` or the artifact tables) still loads and is
-migrated to v2 on the next write.
-
-```toml
-[settings]
-schema_version = 2
-active_profile = "work"
-active_theme   = "gruvbox"
-keys           = ["ctrl-shift-e"]   # slugs; content lives in kittymgr/keys/<slug>.conf
-snippets       = ["tabs"]           # slugs; content lives in kittymgr/snippets/<slug>.conf
-
-[profiles.work]
-plugins = ["theme-sample"]
-
-[[sources]]
-name = "kitty-themes"
-git  = "https://github.com/kovidgoyal/kitty-themes"
-
-[[themes]]
-name = "gruvbox"
-from = "kitty-themes"
-```
-
-`manifest init` bootstraps the file from the current on-disk state. Installed
-themes/plugins/kittens are written with an empty `from` (their origin is not
-recorded on disk) and a note asks you to set each `from` to a `[[sources]]` name;
-once set, `sync` installs any missing artifact before reconciling. `keys` and
-`snippets` are captured by slug — their content stays in
-`kittymgr/keys|snippets/<slug>.conf`, so commit those files to reproduce it.
-
-## Config directory resolution
-
-Resolved in order:
-
-1. `KITTY_CONFIG_DIRECTORY`
-2. `$XDG_CONFIG_HOME/kitty`
-3. `~/.config/kitty`
-
-The resolved path is printed on every run for confirmation.
-
-## Tests
+Requires a Swift 6.1+ toolchain.
 
 ```sh
-swift test          # full suite (Swift Testing)
-scripts/smoke.sh    # end-to-end smoke against a throwaway KITTY_CONFIG_DIRECTORY
-./scripts/release.sh --dry-run   # macOS universal package + checksum + packaged smoke
+swift build -c release
+install -m 0755 .build/release/kittymgr ~/.local/bin/kittymgr
+kittymgr --version
 ```
 
-Linux, reproduced locally the same way CI runs it (build, full suite, and smoke):
+## Planned features
 
-```sh
-docker run --rm -v "$PWD":/app -w /app swift:6.1 bash -lc \
-  'swift build --build-path .build-linux && swift test --build-path .build-linux \
-   && KITTYMGR_BIN=.build-linux/debug/kittymgr scripts/smoke.sh'
-```
+Ideas on the roadmap. Suggestions and issues are welcome.
 
-The separate `--build-path` keeps Linux build artifacts out of the host `.build/`.
+- `kittymgr diff <profile>` to compare two profiles side by side.
+- Profile import/export as a single shareable file.
+- A `--json` output mode for scripting.
+- Shell completions for bash, zsh, and fish.
+- A first-run wizard that detects an existing kitty setup and offers to import it.
+- Optional git integration to version the `kittymgr/` folder automatically.
+- A Homebrew tap for one-line installs on macOS and Linux.
+- A Brazilian Portuguese (pt-BR) language option for the CLI and UI.
+- Prebuilt Linux aarch64 binaries in every release.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+## Donations
+
+If kittymgr is useful to you and you would like to support its development, you can
+sponsor the project here:
+
+- GitHub Sponsors: https://github.com/sponsors/joaaosc
+
+Every contribution is appreciated and helps keep the project maintained.
+
+## Known problems
+
+- The Homebrew tap is not published yet. Use the installer or a manual download for now.
+- Only Linux x86_64 has a prebuilt binary. On Linux aarch64 (ARM), build from source
+  until an ARM release is published.
+- Live reload needs a running kitty with `allow_remote_control` enabled. Without it,
+  changes are still saved correctly but you have to reload kitty yourself (restart it,
+  or run `kitten @ load-config`).
+- The interactive UI (`kittymgr ui`) needs a real terminal. In a pipe or CI it exits
+  with a message — use the plain commands with `--dry-run` there instead.

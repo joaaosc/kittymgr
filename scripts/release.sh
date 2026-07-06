@@ -161,8 +161,8 @@ macos_release() {
     fi
   done
   [ -n "$BIN" ] || fail "release binary not found under $BUILD_PATH"
-  lipo -verify_arch arm64 "$BIN"
-  lipo -verify_arch x86_64 "$BIN"
+  lipo "$BIN" -verify_arch arm64
+  lipo "$BIN" -verify_arch x86_64
 
   install -m 0755 "$BIN" "$PACKAGE_DIR/kittymgr"
   install -m 0644 LICENSE "$PACKAGE_DIR/LICENSE"
@@ -202,8 +202,8 @@ EOF
   local SMOKE_BIN="$EXTRACT_ROOT/kittymgr-$VERSION-macos-universal/kittymgr"
   [ -x "$SMOKE_BIN" ] || fail "extracted binary not found"
   "$SMOKE_BIN" --version | grep -qx "kittymgr $VERSION"
-  lipo -verify_arch arm64 "$SMOKE_BIN"
-  lipo -verify_arch x86_64 "$SMOKE_BIN"
+  lipo "$SMOKE_BIN" -verify_arch arm64
+  lipo "$SMOKE_BIN" -verify_arch x86_64
   KITTYMGR_BIN="$SMOKE_BIN" KITTYMGR_SMOKE_ROOT="$SMOKE_ROOT/config" "$SCRIPT_DIR/smoke.sh"
 
   rm -rf "$WORK"
